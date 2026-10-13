@@ -69,6 +69,8 @@ the guide. They are made from your own game files at start, which stay unchanged
 **Also**
 - Online play (beta): messages, bloodstains and ghosts through
   [The Hunter's Dream](https://thehuntersdream.com), and co-op through a shadNet server.
+- Optional [BBSC seamless co-op test launcher](docs/BBSC_PREVIEW.md) on the Online page
+  (separate download; native BBport gameplay unverified).
 - Death respawns skip the game's fixed 12-second wait.
 - Mods and third-party patches, loaded without changing your game files.
 - The Old Hunters on base-game dumps, with a DLC folder setting.

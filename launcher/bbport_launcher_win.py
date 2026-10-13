@@ -536,6 +536,7 @@ class Launcher:
         self.ini, self.ini_lines = load_ini()
         self.vars = {}
         self.process = self.job = None
+        self.bbsc_preview_running = False
         self.downloading = False
         self.output = queue.Queue()
         self.gpu_text = _('• Checking the graphics card…', '• Проверка видеокарты…')
@@ -1454,6 +1455,59 @@ class Launcher:
         result.grid(row=self.next_row(f), column=1, sticky='w', pady=(6, 0))
         self.note(f, _('Everyone in a session needs the same game version (1.09) and the same server. '
                        'Cheats change the game for the other players too: turn them off when you play together.'))
+        self.section(f, _('BBSC seamless co-op — experimental'))
+        self.note(f, _('BBSC 0.0.1 has a separate BBport test package. Its author has not yet verified '
+                       'co-op on native BBport. It uses its own server and account.'))
+        self.row(f, '', ttk.Button(f, text=_('Get BBSC test package'),
+                                   command=lambda: webbrowser.open('https://github.com/Classmg22/BBSC/releases/tag/v0.0.1')))
+        self.row(f, '', ttk.Button(f, text=_('Launch BBSC preview'), command=self.launch_bbsc_preview))
+        self.note(f, _('Extract the BBport ZIP and choose its folder. The preview backs up savedata '
+                       'and restores your server override when the game ends.'))
+
+    def launch_bbsc_preview(self):
+        import bbsc_preview
+
+        if self.process or self.bbsc_preview_running:
+            self.messagebox.showinfo('BBSC preview', 'Close the current game first.')
+            return
+        self.collect()
+        game = Path(self.app.get('game_dir') or '')
+        info = game_info(game)
+        if not info or info[1] != PATCH_VERSION:
+            self.messagebox.showerror('BBSC preview', 'Choose your CUSA03173 version 1.09 game folder first.')
+            return
+        if self.app.get('user_dir') and Path(self.app['user_dir']).resolve() != (PORT_DIR / 'user').resolve():
+            self.messagebox.showerror('BBSC preview',
+                                      'BBSC 0.0.1 needs the default saves folder. Use a separate BBport copy to test it.')
+            return
+        package = self.filedialog.askdirectory(title='Choose the extracted BBSC-0.0.1-BBport folder',
+                                               initialdir=str(PORT_DIR))
+        if not package:
+            return
+        try:
+            bbsc_preview.validate(package, PORT_DIR, game)
+        except bbsc_preview.PreviewError as error:
+            self.messagebox.showerror('BBSC preview', str(error))
+            return
+        if not self.messagebox.askyesno('BBSC 0.0.1 test build',
+                                        'Co-op in native BBport has not been tested by BBSC\'s author yet. '
+                                        'This preview backs up saves and restores your server override. '
+                                        'It uses a separate account and server. Start the test?'):
+            return
+        self.bbsc_preview_running = True
+        self.append('BBSC preview: backing up saves and starting the test build.\n')
+
+        def work():
+            try:
+                code, backup = bbsc_preview.run_preview(package, PORT_DIR, game)
+                detail = f' Saves backed up to {backup}.' if backup else ' No existing savedata folder.'
+                message = f'BBSC preview exited with code {code}.{detail}\n'
+            except (OSError, bbsc_preview.PreviewError) as error:
+                message = f'BBSC preview could not start: {error}\n'
+            self.ui_calls.put(lambda: self.append(message))
+            self.bbsc_preview_running = False
+
+        threading.Thread(target=work, daemon=False).start()
 
     def build_mods(self):
         f = self.scrolled_page('mods', _('Mods & patches', 'Моды и патчи'),
@@ -1763,6 +1817,9 @@ class Launcher:
 
     # ---- game process ------------------------------------------------------------------------
     def play(self):
+        if self.bbsc_preview_running:
+            self.messagebox.showinfo('Bloodborne', 'Close the BBSC preview game first.')
+            return
         if self.process:
             return
         online, npid = self.var('online', 'app'), self.var('online_npid', 'app')

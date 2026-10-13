@@ -22,6 +22,7 @@ from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 import bbport_launcher_win as core
 import bbport_startup
+import bbsc_preview
 from bbport_pkg_setup import PackageSetupError, install_game
 from bbport_readiness import check_readiness, valid_trophy_key
 
@@ -200,6 +201,7 @@ class LauncherBackend(QObject):
     workerNotice = Signal(str)
     gpuDetected = Signal(str)
     connectionResult = Signal(str)
+    bbscPreviewFinished = Signal(str)
     setupRunningChanged = Signal()
     setupCompleted = Signal(str)
     setupFailed = Signal(str)
@@ -226,10 +228,12 @@ class LauncherBackend(QObject):
         self._settings_revision = 0
         self._gpu_status = 'Checking graphics card…'
         self._setup_running = False
+        self._bbsc_preview_running = False
         self.workerNotice.connect(self._set_notice)
         self.updateAvailable.connect(self._offer_update)
         self.gpuDetected.connect(self._set_gpu_status)
         self.connectionResult.connect(self._show_connection_result)
+        self.bbscPreviewFinished.connect(self._finish_bbsc_preview)
         self.setupCompleted.connect(self._complete_game_setup)
         self.setupFailed.connect(self._fail_game_setup)
         self.refresh_addons()
@@ -692,6 +696,9 @@ class LauncherBackend(QObject):
 
     @Slot()
     def play(self):
+        if self._bbsc_preview_running:
+            self._set_notice('Close the BBSC preview game before starting another session.')
+            return
         if self._setup_running:
             self._set_notice('Wait for the game files to finish installing.')
             return
@@ -1048,6 +1055,60 @@ class LauncherBackend(QObject):
     @Slot()
     def openShadNetRegistration(self):
         webbrowser.open('https://shadps4.net/shadnet/register/')
+
+    @Slot()
+    def openBBSCRelease(self):
+        webbrowser.open(bbsc_preview.RELEASE_URL)
+
+    @Slot()
+    def launchBBSCPreview(self):
+        if self.process or self._bbsc_preview_running:
+            self._set_notice('Close the current game before starting BBSC.')
+            return
+        game = Path(self.app.get('game_dir') or '')
+        info = core.game_info(game)
+        if not info or info[1] != core.PATCH_VERSION:
+            self._set_notice('Choose your CUSA03173 version 1.09 game folder first.')
+            return
+        if self.app.get('user_dir') and Path(self.app['user_dir']).resolve() != (core.PORT_DIR / 'user').resolve():
+            self._set_notice('BBSC 0.0.1 needs the default saves folder. Use a separate BBport copy to test it.')
+            return
+        package = QFileDialog.getExistingDirectory(
+            None, 'Choose the extracted BBSC-0.0.1-BBport folder', str(core.PORT_DIR))
+        if not package:
+            return
+        try:
+            bbsc_preview.validate(package, core.PORT_DIR, game)
+        except bbsc_preview.PreviewError as error:
+            QMessageBox.warning(None, 'BBSC preview', str(error))
+            return
+        answer = QMessageBox.question(
+            None, 'BBSC 0.0.1 test build',
+            'BBSC says co-op in native BBport has not been tested yet. This preview backs up '
+            'your saves and restores your server override when it ends. Its own account and '
+            'public server are separate from the normal Online settings. Start the test?',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._bbsc_preview_running = True
+        self._set_notice('Preparing BBSC preview and backing up saves…')
+
+        def work():
+            try:
+                code, backup = bbsc_preview.run_preview(package, core.PORT_DIR, game)
+                detail = f' Saves backed up to {backup}.' if backup else ' No existing savedata folder.'
+                message = f'BBSC preview exited with code {code}.{detail}'
+            except (OSError, bbsc_preview.PreviewError) as error:
+                message = f'BBSC preview could not start: {error}'
+            self.bbscPreviewFinished.emit(message)
+
+        threading.Thread(target=work, daemon=False).start()
+
+    @Slot(str)
+    def _finish_bbsc_preview(self, message):
+        self._bbsc_preview_running = False
+        self._set_notice(message)
 
     @Slot()
     def testConnection(self):

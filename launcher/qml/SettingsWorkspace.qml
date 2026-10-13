@@ -264,6 +264,11 @@ Item {
                         GlassButton { text: "Test connection"; width: 148; height: 38; onClicked: launcher.testConnection() }
                     }
                     Note { visible: is("Online", "Play online"); text: "Enter an account ID, not an email address. Test connection checks that the servers answer, not your sign-in." }
+                    Note { visible: is("Online", "Play online"); text: "BBSC seamless co-op preview: a separate 0.0.1 BBport test package. Native BBport co-op has not yet been verified by BBSC's author. Its server and account are separate from the normal Online settings." }
+                    Row { visible: is("Online", "Play online"); spacing: 10
+                        GlassButton { text: "Get BBSC test package"; width: 190; height: 38; onClicked: launcher.openBBSCRelease() }
+                        GlassButton { text: "Launch BBSC preview"; width: 185; height: 38; onClicked: launcher.launchBBSCPreview() }
+                    }
                     Note { visible: is("Mods & Patches", "Gameplay patches"); text: "Optional gameplay changes. All are off by default and apply the next time the game starts." }
                     Repeater {
                         model: is("Mods & Patches", "Installed mods") ? launcher.contentMods : []
