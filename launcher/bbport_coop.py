@@ -39,7 +39,8 @@ PACKAGES = {
 SHADNET_PORT, MATCHING_PORT, WEBAPI_PORT, GAME_PORT, RELAY_PORT = 31313, 31314, 31315, 20443, 20444
 INVITE_PREFIX = 'BBCOOP-'
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
-TAILSCALE = Path(os.environ.get('ProgramFiles', r'C:\Program Files')) / 'Tailscale' / 'tailscale.exe'
+# Tailscale's own address on every tailnet: a route to it goes out through the Tailscale adapter.
+TAILSCALE_DNS = '100.100.100.100'
 # Inbound rules: the server ports, and the game itself (the host's game takes the guests'
 # connections). Tailscale's range and this PC's own networks only - nothing opens to the internet.
 FIREWALL_RANGES = ('100.64.0.0/10', 'LocalSubnet')
@@ -140,11 +141,28 @@ def download(kind, progress=None):
 
 # --- Network ---------------------------------------------------------------------------------------
 
+def tailscale_exe():
+    """tailscale.exe: on PATH (the installer adds it, wherever it was installed), else the default folder."""
+    found = shutil.which('tailscale')
+    if found:
+        return Path(found)
+    for variable in ('ProgramW6432', 'ProgramFiles'):
+        folder = os.environ.get(variable)
+        if folder and (Path(folder) / 'Tailscale' / 'tailscale.exe').is_file():
+            return Path(folder) / 'Tailscale' / 'tailscale.exe'
+    return None
+
+
 def tailscale_ip():
-    if not TAILSCALE.is_file():
+    return _tailscale_ip_from_cli() or _tailscale_ip_from_route()
+
+
+def _tailscale_ip_from_cli():
+    exe = tailscale_exe()
+    if not exe:
         return None
     try:
-        out = subprocess.run([str(TAILSCALE), 'ip', '-4'], capture_output=True, text=True,
+        out = subprocess.run([str(exe), 'ip', '-4'], capture_output=True, text=True,
                              timeout=10, creationflags=NO_WINDOW).stdout
     except (OSError, subprocess.SubprocessError):
         return None
@@ -152,6 +170,17 @@ def tailscale_ip():
         if is_tailscale(line):
             return line
     return None
+
+
+def _tailscale_ip_from_route():
+    """This PC's address on the Tailscale adapter, when the CLI can't be run (no packet is sent)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+        try:
+            probe.connect((TAILSCALE_DNS, 9))
+            ip = probe.getsockname()[0]
+        except OSError:
+            return None
+    return ip if is_tailscale(ip) else None
 
 
 def is_tailscale(address):

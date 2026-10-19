@@ -125,6 +125,25 @@ class CoopTests(unittest.TestCase):
         self.assertFalse(coop.is_tailscale('100.128.0.1'))
         self.assertFalse(coop.is_tailscale('192.168.1.5'))
 
+    def test_tailscale_is_found_on_path_outside_program_files(self):
+        exe = r'E:\Installs\Tailscale\tailscale.exe'
+        ran = mock.Mock(stdout='100.64.233.56\n')
+        with mock.patch.object(coop.shutil, 'which', return_value=exe), \
+                mock.patch.object(coop.subprocess, 'run', return_value=ran) as run:
+            self.assertEqual(coop.tailscale_ip(), '100.64.233.56')
+        self.assertEqual(run.call_args[0][0][0], str(Path(exe)))
+
+    def test_tailscale_address_from_the_route_when_the_cli_is_missing(self):
+        probe = mock.MagicMock()
+        probe.__enter__.return_value.getsockname.return_value = ('100.64.233.56', 50000)
+        with mock.patch.object(coop, 'tailscale_exe', return_value=None), \
+                mock.patch.object(coop.socket, 'socket', return_value=probe):
+            self.assertEqual(coop.tailscale_ip(), '100.64.233.56')
+        probe.__enter__.return_value.getsockname.return_value = ('192.168.1.5', 50000)
+        with mock.patch.object(coop, 'tailscale_exe', return_value=None), \
+                mock.patch.object(coop.socket, 'socket', return_value=probe):
+            self.assertIsNone(coop.tailscale_ip())
+
     def test_account_names_are_checked_before_asking_the_server(self):
         with self.assertRaises(coop.CoopError):
             coop.create_account('100.65.141.9', '', 'x', 'secret')
