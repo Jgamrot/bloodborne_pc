@@ -59,14 +59,33 @@ if (NOT magic_enum_FOUND)
     target_include_directories(magic_enum INTERFACE third_party/magic_enum/include
                                                     third_party/magic_enum/include/magic_enum)
 endif()
-find_package(tsl-robin-map REQUIRED)
+find_package(tsl-robin-map QUIET)
+if (NOT tsl-robin-map_FOUND)
+    include(FetchContent)
+    FetchContent_Declare(
+        tsl-robin-map
+        GIT_REPOSITORY https://github.com/Tessil/robin-map.git
+        GIT_TAG v1.4.1
+    )
+    FetchContent_MakeAvailable(tsl-robin-map)
+endif()
 find_package(VulkanMemoryAllocator CONFIG QUIET)
 if (NOT VulkanMemoryAllocator_FOUND)
     # MSYS2 ships the header (include/vma/vk_mem_alloc.h) without a CMake package.
-    find_path(VMA_INCLUDE_DIR vk_mem_alloc.h PATH_SUFFIXES vma REQUIRED)
-    add_library(VulkanMemoryAllocator INTERFACE)
-    add_library(GPUOpen::VulkanMemoryAllocator ALIAS VulkanMemoryAllocator)
-    target_include_directories(VulkanMemoryAllocator INTERFACE ${VMA_INCLUDE_DIR})
+    find_path(VMA_INCLUDE_DIR vk_mem_alloc.h PATH_SUFFIXES vma)
+    if (VMA_INCLUDE_DIR)
+        add_library(VulkanMemoryAllocator INTERFACE)
+        add_library(GPUOpen::VulkanMemoryAllocator ALIAS VulkanMemoryAllocator)
+        target_include_directories(VulkanMemoryAllocator INTERFACE ${VMA_INCLUDE_DIR})
+    else()
+        include(FetchContent)
+        FetchContent_Declare(
+            VulkanMemoryAllocator
+            GIT_REPOSITORY https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
+            GIT_TAG v3.1.0
+        )
+        FetchContent_MakeAvailable(VulkanMemoryAllocator)
+    endif()
 endif()
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(XXHASH REQUIRED IMPORTED_TARGET libxxhash)
@@ -85,7 +104,22 @@ if (NOT miniz_FOUND)
     unset(CMAKE_POLICY_VERSION_MINIMUM)
     add_library(miniz::miniz ALIAS miniz)
 endif()
-find_package(Zydis REQUIRED)
+find_package(Zydis QUIET)
+if (NOT Zydis_FOUND)
+    include(FetchContent)
+    set(ZYDIS_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(ZYDIS_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        Zydis
+        GIT_REPOSITORY https://github.com/zyantific/zydis.git
+        GIT_TAG v4.1.1
+        GIT_SUBMODULES_RECURSE TRUE
+    )
+    FetchContent_MakeAvailable(Zydis)
+    if (TARGET Zydis AND NOT TARGET Zydis::Zydis)
+        add_library(Zydis::Zydis ALIAS Zydis)
+    endif()
+endif()
 find_program(GLSLANG_COMPILER NAMES glslang glslangValidator REQUIRED)
 
 set(SIRIT_USE_SYSTEM_SPIRV_HEADERS OFF CACHE BOOL "" FORCE)
@@ -207,11 +241,30 @@ target_link_libraries(bbnet PRIVATE OpenSSL::SSL OpenSSL::Crypto ZLIB::ZLIB)
 if (WIN32)
     target_sources(bbnet PRIVATE third_party/wepoll/wepoll.c)
     target_include_directories(bbnet PRIVATE third_party/wepoll)
-    find_path(MINIUPNPC_INCLUDE miniupnpc.h PATH_SUFFIXES miniupnpc REQUIRED)
-    find_library(MINIUPNPC_LIBRARY NAMES libminiupnpc.a miniupnpc REQUIRED)
+endif()
+find_path(MINIUPNPC_INCLUDE miniupnpc.h PATH_SUFFIXES miniupnpc)
+find_library(MINIUPNPC_LIBRARY NAMES libminiupnpc.a miniupnpc)
+if (MINIUPNPC_INCLUDE AND MINIUPNPC_LIBRARY)
     target_include_directories(bbnet PRIVATE "${MINIUPNPC_INCLUDE}")
     target_compile_definitions(bbnet PRIVATE MINIUPNP_STATICLIB)
     target_link_libraries(bbnet PRIVATE "${MINIUPNPC_LIBRARY}")
+else()
+    include(FetchContent)
+    set(UPNPC_BUILD_STATIC ON CACHE BOOL "" FORCE)
+    set(UPNPC_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+    set(UPNPC_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(UPNPC_BUILD_SAMPLE OFF CACHE BOOL "" FORCE)
+    set(UPNPC_NO_INSTALL ON CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        miniupnpc
+        GIT_REPOSITORY https://github.com/miniupnp/miniupnp.git
+        GIT_TAG miniupnpc_2_2_8
+        SOURCE_SUBDIR miniupnpc
+    )
+    FetchContent_MakeAvailable(miniupnpc)
+    target_include_directories(bbnet PRIVATE "${miniupnpc_SOURCE_DIR}/miniupnpc")
+    target_compile_definitions(bbnet PRIVATE MINIUPNP_STATICLIB)
+    target_link_libraries(bbnet PRIVATE libminiupnpc-static)
 endif()
 target_compile_definitions(bbnet PRIVATE BOOST_ASIO_STANDALONE NDEBUG)
 target_compile_options(bbnet PRIVATE -Wno-deprecated-declarations -Wno-missing-field-initializers)
@@ -234,7 +287,7 @@ target_compile_definitions(bbgpu PRIVATE IMGUI_IMPL_VULKAN_NO_PROTOTYPES
     BB_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf")
 set_source_files_properties(shim/bbport_overlay.cpp PROPERTIES
     OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf)
-target_include_directories(bbgpu PRIVATE shim shadps4 ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include)
+target_include_directories(bbgpu PRIVATE shim shadps4 ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include third_party/xbyak)
 target_compile_definitions(bbgpu PRIVATE BOOST_ASIO_STANDALONE NDEBUG)
 target_compile_options(bbgpu PRIVATE -Wno-deprecated-declarations -Wno-missing-field-initializers)
 # Runtime symbols (runtime_memory_*, runtime_process_*) resolve against bb-probe.
@@ -252,7 +305,6 @@ if (WIN32)
     # Quoted: the build works from a folder with spaces in its path (after PR #72).
     target_compile_options(bbgpu PRIVATE
         "SHELL:-include \"${CMAKE_CURRENT_SOURCE_DIR}/shim/bb_win_compat.h\"")
-    target_include_directories(bbgpu PRIVATE third_party/xbyak)
     target_link_libraries(bbgpu PUBLIC Vulkan::Vulkan ws2_32 bcrypt ntdll synchronization winmm)
 else()
     target_link_libraries(bbgpu PUBLIC PkgConfig::X11)
@@ -388,6 +440,10 @@ add_executable(output-settings-test EXCLUDE_FROM_ALL ../tests/test_output_settin
     shim/bbport_settings.cpp)
 target_include_directories(output-settings-test PRIVATE shim)
 target_compile_options(output-settings-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+
+add_executable(frame-limiter-test EXCLUDE_FROM_ALL ../tests/test_frame_limiter.cpp)
+target_compile_options(frame-limiter-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+
 
 if (WIN32)
     add_executable(aspect-thunk-test EXCLUDE_FROM_ALL ../tests/test_aspect_thunk.cpp)

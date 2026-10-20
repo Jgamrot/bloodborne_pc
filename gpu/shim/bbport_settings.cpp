@@ -357,9 +357,23 @@ void SetFullscreen(bool on) {
 #else
     setenv("BB_FULLSCREEN", on ? "1" : "0", 1);
 #endif
+#ifdef _WIN32
     const char* appdata = std::getenv("APPDATA");
     if (!appdata) return;
     const std::filesystem::path file = std::filesystem::path(appdata) / "bbport-launcher" / "settings.json";
+#else
+    // The same directory as launcher/bbport_launcher.py (XDG_CONFIG_HOME or ~/.config).
+    const char* config = std::getenv("XDG_CONFIG_HOME");
+    std::filesystem::path directory;
+    if (config && config[0]) {
+        directory = config;
+    } else {
+        const char* home = std::getenv("HOME");
+        if (!home || !home[0]) return;
+        directory = std::filesystem::path(home) / ".config";
+    }
+    const std::filesystem::path file = directory / "bbport-launcher" / "settings.json";
+#endif
     std::ifstream in(file);
     if (!in) return;
     nlohmann::json root = nlohmann::json::parse(in, nullptr, false);

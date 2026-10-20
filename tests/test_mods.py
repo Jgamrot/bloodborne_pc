@@ -129,12 +129,23 @@ class ModTests(unittest.TestCase):
             real(link, target)
 
         from unittest import mock
-        with mock.patch.object(mods, 'make_link', make_link),                 mock.patch.object(mods.os, 'name', 'nt'),                 mock.patch.object(mods.tempfile, 'gettempdir', return_value=str(self.root / 'temp')):
+        with mock.patch.object(mods, 'make_link', make_link), \
+             mock.patch.object(mods.tempfile, 'gettempdir', return_value=str(self.root / 'temp')):
             (self.root / 'temp').mkdir()
             result = mods.build_overlay(self.game, refused, [('A', a)])
         self.assertEqual(result.parent, (self.root / 'temp').resolve())
         self.assertEqual((result / 'dvdroot_ps4/chr/a.dcx').read_bytes(), b'mod')
         self.assertEqual(list(refused.iterdir()), [])
+
+    def test_overlay_paths_with_spaces_on_linux(self):
+        a = self.mod('Mod With Spaces')
+        space_root = self.root / 'path with spaces'
+        space_root.mkdir()
+        out = space_root / 'out dir'
+        result = mods.build_overlay(self.game, out, [('Mod With Spaces', a)])
+        folder = result / 'dvdroot_ps4/chr'
+        self.assertEqual((folder / 'a.dcx').read_bytes(), b'mod')
+        self.assertTrue(result.exists())
 
     def test_executable_replacement_rejected(self):
         a = self.mod('A')

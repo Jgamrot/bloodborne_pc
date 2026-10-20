@@ -17,12 +17,12 @@
 static uintptr_t base;
 static int state_ready, travel_ready;
 static atomic_int travel_status;
+#ifdef _WIN32
 static BbAtlasTravelDestination pending;
 static uintptr_t pending_player;
 static uint64_t request_time;
 static uint32_t source_block;
 static int observed_loading;
-#ifdef _WIN32
 static SRWLOCK request_lock = SRWLOCK_INIT;
 static int64_t (ATLAS_ABI *original_frame)(void *);
 #endif
@@ -70,6 +70,7 @@ int runtime_atlas_flag(uint32_t id) {
     if(!data || !read_mem(data+(bit>>3),&value,1) || man!=ptr(base+0x553b100))return -1;
     return (value&(0x80u>>(bit&7)))?1:0;
 }
+#ifdef _WIN32
 static int eligible(const BbAtlasTravelDestination *d) {
     if(d->return_point<=0 || d->on_count>8 || d->off_count>8)return 0;
     if(d->unlock_flag && runtime_atlas_flag(d->unlock_flag)!=1)return 0;
@@ -77,6 +78,7 @@ static int eligible(const BbAtlasTravelDestination *d) {
     for(unsigned i=0;i<d->off_count;++i)if(runtime_atlas_flag(d->off[i])!=0)return 0;
     return 1;
 }
+#endif
 int runtime_atlas_travel_supported(void){return travel_ready;}
 int runtime_atlas_travel_status(void){return atomic_load_explicit(&travel_status,memory_order_acquire);}
 int runtime_atlas_travel_request(const BbAtlasTravelDestination *d) {

@@ -16,6 +16,7 @@
  * & 0x8f == 10 is a display object, whose native DisplayObject is *(data + 0x88): parent +0x38,
  * flags +0x6b (0x40 visible), GetBounds at vtable +0x1f0. sub_402040 is its world matrix.
  * Coordinates are the movie's stage: 1920x1080 pixels, 20 twips to the pixel. */
+#define _GNU_SOURCE
 #include "menu_pointer.h"
 
 #include "engine_hooks.h"

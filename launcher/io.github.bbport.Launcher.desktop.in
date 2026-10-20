@@ -3,5 +3,5 @@ Type=Application
 Name=Bloodborne
 Comment=Native Bloodborne port launcher
 Exec=@LAUNCHER@
-Icon=applications-games
+Icon=io.github.bbport.Launcher
 Categories=Game;

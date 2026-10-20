@@ -292,16 +292,14 @@ def build_overlay(game, out, mods):
     out = Path(out).resolve()
     out.mkdir(parents=True, exist_ok=True)
     places = [out]
-    if os.name == 'nt':
-        if out.drive.casefold() != game.drive.casefold():
-            # Hard links only reach files on the same volume: the overlay goes beside the game.
-            places.insert(0, game.parent)
-        # A drive without links (exFAT, FAT32, some network shares: "Incorrect function") cannot
-        # hold the overlay; folder links on another drive still reach the game, and its files are
-        # copied (only the folders a mod changes are opened up).
-        temp = Path(tempfile.gettempdir()).resolve()
-        if temp not in places:
-            places.append(temp)
+    if os.name == 'nt' and out.drive.casefold() != game.drive.casefold():
+        # Hard links only reach files on the same volume: the overlay goes beside the game.
+        places.insert(0, game.parent)
+    # A drive or filesystem without links (exFAT, FAT32, some network shares) cannot hold
+    # the overlay; folder links on another drive/temp still reach the game.
+    temp = Path(tempfile.gettempdir()).resolve()
+    if temp not in places:
+        places.append(temp)
     for at, place in enumerate(places):
         try:
             return _overlay_at(game, place, replacements)

@@ -1006,6 +1006,42 @@ bool TemporalUpscaler::RecordReactive(vk::ImageView color_view) {
     return true;
 }
 
+void TemporalUpscaler::LogUpscalerState(const char* context, u32 w, u32 h, u32 ow, u32 oh) {
+    const auto& settings = BbSettings::Get();
+    const int upscaler_idx = settings.upscaler.load();
+    const int preset_idx = BbSettings::RenderPreset();
+    const bool sharpen_active = settings.sharpen.load();
+    const float raw_sharpness = settings.sharpness.load();
+    float effective_sharpness = 0.0f;
+    if (sharpen_active) {
+        if (upscaler_idx == BbSettings::UpscalerTaa) {
+            effective_sharpness = std::clamp(raw_sharpness, 0.0f, 2.0f);
+        } else {
+            effective_sharpness = std::min(raw_sharpness, 1.0f) + (raw_sharpness > 1.0f ? (raw_sharpness - 1.0f) : 0.0f);
+        }
+    }
+    static int last_logged_upscaler = -1;
+    static int last_logged_preset = -1;
+    static u32 last_logged_w = 0, last_logged_h = 0, last_logged_ow = 0, last_logged_oh = 0;
+    static int last_logged_sharpen = -1;
+    static float last_logged_sharpness = -1.0f;
+    if (last_logged_upscaler != upscaler_idx || last_logged_preset != preset_idx ||
+        last_logged_w != w || last_logged_h != h || last_logged_ow != ow || last_logged_oh != oh ||
+        last_logged_sharpen != int(sharpen_active) || last_logged_sharpness != raw_sharpness) {
+        last_logged_upscaler = upscaler_idx;
+        last_logged_preset = preset_idx;
+        last_logged_w = w; last_logged_h = h;
+        last_logged_ow = ow; last_logged_oh = oh;
+        last_logged_sharpen = int(sharpen_active);
+        last_logged_sharpness = raw_sharpness;
+        std::printf("[Upscaler:%s] Active: %s, Render: %ux%u, Output: %ux%u, Preset: %s (scale: %.2f), Sharpen: %s (slider: %.2f, effective: %.2f)\n",
+                    context, BbSettings::UpscalerName(upscaler_idx), w, h, ow, oh,
+                    BbSettings::PresetName(preset_idx), BbSettings::PresetScale(preset_idx),
+                    sharpen_active ? "ENABLED" : "DISABLED", raw_sharpness, effective_sharpness);
+        std::fflush(stdout);
+    }
+}
+
 void TemporalUpscaler::Run() {
     if (auto* profiler = GpuProfiler::Get()) {
         const char* label = BbSettings::Get().upscaler == BbSettings::UpscalerTaa
@@ -1019,6 +1055,7 @@ void TemporalUpscaler::Run() {
     const bool reduced = ReducedScene(color) && scene_targets.EligibleScene(depth);
     const u32 w = reduced ? scene_targets.Size().width : ow;
     const u32 h = reduced ? scene_targets.Size().height : oh;
+    LogUpscalerState("Native", w, h, ow, oh);
     if (color.info.pixel_format != vk::Format::eR16G16B16A16Sfloat ||
         depth.info.size.width != ow || depth.info.size.height != oh ||
         !(color.usage_flags & vk::ImageUsageFlagBits::eStorage)) {
@@ -1713,6 +1750,7 @@ void TemporalUpscaler::RunScaled() {
     if (depth.info.size.width != iw || depth.info.size.height != ih || w > ow || h > oh) {
         return;
     }
+    LogUpscalerState("Scaled", w, h, ow, oh);
     if (!EnsureResources(w, h, ow, oh, false)) {
         failed = true;
         return;

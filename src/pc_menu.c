@@ -25,6 +25,7 @@
  * toggles, and while one is open the captions and values under it are blanked: the rows draw
  * the raw UTF-16 pointers they were laid out with, so the menu lays them out with buffers of its
  * own and empties those (the menus' list update, hooked, says which list has the input). */
+#define _GNU_SOURCE
 #include "pc_menu.h"
 #include "engine_hooks.h"
 #include "menu_pointer.h"

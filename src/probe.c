@@ -13,12 +13,12 @@
 #if !defined(__x86_64__) || !defined(__GNUC__)
 #error This prototype requires x86-64 GCC or Clang (including MinGW).
 #endif
-#ifdef _WIN32
-#include <windows.h>
 #include "respawn_patch.h"
 #include "menu_heap_patch.h"
 #include "engine_hooks.h"
 #include "engine_features.h"
+#ifdef _WIN32
+#include <windows.h>
 #else
 #include <sys/mman.h>
 #include <malloc.h>
@@ -685,6 +685,7 @@ int main(int argc, char **argv) {
             runtime_atlas_state_bind(image, size);
         }
     }
+#endif
     if (!cpu_only) {
         const char *respawn_fix = getenv("BB_RESPAWN_DELAY_FIX");
         if (respawn_fix && !strcmp(respawn_fix, "0")) {
@@ -716,11 +717,10 @@ int main(int argc, char **argv) {
             bbgpu_set_frame_callback(bb_engine_frame);
         }
     }
+#ifdef _WIN32
     printf("Guest TCB loads redirected to the TEB TLS slot: %" PRIu64 "\n", patch_tcb_loads(segments, ns));
 #endif
-#ifdef _WIN32
     bb_hooks_seal();
-#endif
     protect(traps, round_page((import_count + 1) * 32), 5);
     /* Only the pages no segment covers become inaccessible; the segments' pages go straight from
      * read-write to their own protection. A tool injected into the process (BBSC's import-slot

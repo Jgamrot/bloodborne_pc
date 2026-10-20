@@ -40,19 +40,70 @@ if [[ -z ${PYTHON:-} ]]; then echo 'Install Python 3 or set PYTHON.' >&2; exit 1
 game=${BB_GAME_DIR:-../CUSA03173}
 if [[ ! -f $game/eboot.bin ]]; then echo "No eboot.bin in $game (set BB_GAME_DIR)." >&2; exit 1; fi
 original_game=$game
+# Sizes chosen below for the previous launch are recomputed after an in-game restart.
+if [[ ${BB_AUTO_RENDER_RES:-} == 1 ]]; then
+    unset BB_RENDER_RES BB_OUTPUT_RES BB_AUTO_RENDER_RES
+fi
 # PC enhancements (bbport.ini pc_*, BB_PC_*): files made from the game, under the mods.
 generated=()
+enhancement_folders=()
 # The in-game PC menu adds its rows only when its files were made, and the title's Quit Game
 # only when both title movies have its line.
 export BB_PC_MENU_ASSETS=0 BB_PC_MENU_QUIT=0 BB_PC_REBIRTH_ACTIVE=0
 while IFS= read -r folder; do
-    [[ -n $folder ]] && generated+=(--generated "$folder")
+    if [[ -n $folder ]]; then
+        generated+=(--generated "$folder")
+        enhancement_folders+=("$folder")
+    fi
     [[ ${folder##*/} == rebirth ]] && BB_PC_REBIRTH_ACTIVE=1  # the altar's script is in place
     if [[ ${folder##*/} == pc-menu ]]; then
         BB_PC_MENU_ASSETS=1
         [[ -f $folder/dvdroot_ps4/menu/title.gfx && -f $folder/dvdroot_ps4/menu/title_dlc.gfx ]] && BB_PC_MENU_QUIT=1
     fi
 done < <("$PYTHON" scripts/enhancements.py --game "$game" --out "$out/enhancements" --settings "$BB_CONFIG")
+# The UI/movie viewport the renderer composes at (run.py exports the same): the widened HUD
+# canvas for a patched ultrawide output, or the output size at another aspect ratio.
+unset BB_UI_RES
+hud_width=0 ui_width='' ui_height=''
+# An explicit render size without an output size drives the scene only (run.py does the same):
+# the game keeps its own output and movie viewport.
+if [[ -z ${BB_RENDER_RES:-} || -n ${BB_OUTPUT_RES:-} ]]; then
+    if read -r hud_width ui_width ui_height < <("$PYTHON" scripts/patches.py --print-ui-res \
+            --settings "$BB_CONFIG" --output-res "${BB_OUTPUT_RES:-}" --game-dir "$original_game"); then
+        if [[ -n ${ui_width:-} && -n ${ui_height:-} ]]; then
+            export BB_UI_RES="${ui_width}x${ui_height}"
+        fi
+    fi
+fi
+# Ultrawide HUD layout (bbport.ini hud_position, 0 centred .. 100 edges): a layer above the
+# generated enhancement files and below the player's mods, as run.py builds it.
+if [[ ${hud_width:-0} =~ ^[0-9]+$ ]] && (( hud_width > 0 )); then
+    position=100
+    if [[ -f $BB_CONFIG ]]; then
+        while IFS= read -r line || [[ -n $line ]]; do
+            if [[ $line =~ ^[[:space:]]*hud_position[[:space:]]*=[[:space:]]*([0-9]+)[[:space:]]*$ ]]; then
+                position=$((10#${BASH_REMATCH[1]}))
+            fi
+        done < "$BB_CONFIG"
+    fi
+    if (( position > 100 )); then position=100; fi
+    if (( position >= 100 )); then
+        position=1.0
+    else
+        printf -v position '0.%02d' "$position"
+    fi
+    "$PYTHON" -c 'import shutil,sys; shutil.rmtree(sys.argv[1], ignore_errors=True)' "$out/hud_layout"
+    hud_args=(--out "$out/hud_layout" --canvas-width "$hud_width" --position "$position")
+    for folder in ${enhancement_folders[@]+"${enhancement_folders[@]}"}; do
+        hud_args+=(--source "$folder")
+    done
+    if ! "$PYTHON" scripts/hud_layout.py "$original_game" "${hud_args[@]}"; then
+        echo 'HUD layout: failed; the HUD stays centred' >&2
+    fi
+    if [[ -d $out/hud_layout/dvdroot_ps4 ]]; then
+        generated+=(--generated "$out/hud_layout")
+    fi
+fi
 # The Xbox button prompts the package ships (packaging/windows/mods in a source checkout).
 bundled=()
 for folder in "mods/Xbox 360 Prompts (Elden Ring)" "packaging/windows/mods/Xbox 360 Prompts (Elden Ring)"; do
@@ -65,6 +116,20 @@ done
 game=$("$PYTHON" scripts/mods.py "$game" --out "$out" \
     --mods-dir "${BB_MODS_DIR:-$data/mods}" --config "${BB_MODS_CONFIG:-$data/mods.json}" \
     --enabled "${BB_MODS_ENABLED:-1}" ${generated[@]+"${generated[@]}"} ${bundled[@]+"${bundled[@]}"})
+# Keyboard prompts: whether the key images are among the mods in use, as run.py does.
+export BB_BUTTON_PROMPTS="" BB_KEY_PROMPT_IMAGES="0"
+if [[ ${BB_MODS_ENABLED:-1} == 1 ]]; then
+    if "$PYTHON" -c "import sys, pathlib; \
+mods_dir = pathlib.Path(sys.argv[1]); \
+cfg_path = pathlib.Path(sys.argv[2]); \
+sys.path.insert(0, 'scripts'); \
+import mods; \
+sys.exit(0 if 'Keyboard Prompts (PCBButtons)' in mods.selected(mods_dir, cfg_path) else 1)" \
+        "${BB_MODS_DIR:-$data/mods}" "${BB_MODS_CONFIG:-$data/mods.json}" 2>/dev/null; then
+        export BB_BUTTON_PROMPTS="Keyboard"
+        export BB_KEY_PROMPT_IMAGES="1"
+    fi
+fi
 # A private merged view lasts for this launch, including restarts. Cleanup only our own view.
 if [[ $game != "$(realpath "$original_game")" ]]; then
     mod_game=$game
@@ -80,13 +145,22 @@ else
     unset BB_CPU_COMPAT
 fi
 "$PYTHON" scripts/content_profile.py "$game" --out "$out" --sku "${BB_CONTENT_SKU:-full}"
-# Sizes chosen below for the previous launch are recomputed after an in-game restart.
-if [[ ${BB_AUTO_RENDER_RES:-} == 1 ]]; then
-    unset BB_RENDER_RES BB_OUTPUT_RES BB_AUTO_RENDER_RES
-fi
 # BB_RENDER_RES=WxH explicitly sets the game's render resolution (a patch at start).
 # Frame rate: BB_FPS=uncap (default; delta-time patch, vblank follows the display),
 # 60/90 (fixed-timestep patches) or 30 (unpatched). BB_PATCHES adds patch names ("a;b").
+if [[ -f $BB_CONFIG ]]; then
+    while IFS= read -r line || [[ -n $line ]]; do
+        if [[ -z ${BB_FPS:-} && $line =~ ^[[:space:]]*fps_mode[[:space:]]*=[[:space:]]*([^[:space:]]+) ]]; then
+            export BB_FPS=${BASH_REMATCH[1]}
+        fi
+        if [[ -z ${BB_FPS_LIMIT:-} && $line =~ ^[[:space:]]*fps_limit[[:space:]]*=[[:space:]]*([0-9]+) ]]; then
+            limit=${BASH_REMATCH[1]}
+            if (( limit > 0 )); then
+                export BB_FPS_LIMIT=$limit
+            fi
+        fi
+    done < "$BB_CONFIG"
+fi
 fps=${BB_FPS:-uncap}
 # bbport.ini output_res other than 1080p (720p for the Steam Deck, 1440p, 2160p): the whole game
 # renders at the preset's size of the output (a patch), the upscaler fills the output, the UI is

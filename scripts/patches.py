@@ -141,7 +141,7 @@ def read_settings(path):
     # UTF-8 outside that encoding. Match the Windows launcher (encoding='utf-8').
     settings={}
     if path.exists():
-        for line in path.read_text(encoding='utf-8').splitlines():
+        for line in path.read_text(encoding='utf-8', errors='replace').splitlines():
             key,sep,value=line.partition('=')
             if sep and not line.startswith('#'): settings[key.strip()]=value.strip()
     return settings
@@ -201,6 +201,23 @@ def hud_canvas(output):
     w,h=output
     if not ultrawide(output): return OUTPUT_SIZE
     return (round(OUTPUT_SIZE[1]*w/h/2)*2,OUTPUT_SIZE[1])
+
+
+def ui_resolution(settings,output_override='',game_dir=None):
+    """(HUD canvas width or 0, (UI width, UI height)) for run.sh's BB_UI_RES and hud_layout.
+    None for 16:9; the widened canvas for a patched ultrawide output, else the output size."""
+    out=output_size({'output_res':output_override}) if output_override else output_size(settings)
+    # 16:9 sizes share the game's stage; only other aspect ratios need a movie viewport.
+    if out[0]*9==out[1]*16: return None
+    hud=0
+    if ultrawide(out):
+        game=Path(game_dir or os.environ.get('BB_GAME_DIR','../CUSA03173'))
+        clean=(game_app_version(game) in (None,'01.09') and
+               eboot_is_109(str(game.resolve()/'eboot.bin')))
+        if clean or os.environ.get('BB_FORCE_PATCHES'):
+            canvas=hud_canvas(out)
+            return canvas[0],canvas
+    return hud,out
 
 
 def ultrawide_writes(xml,output,app_version,segments):
@@ -486,6 +503,8 @@ def main():
     p.add_argument('--output-res',default='',help='output resolution WxH (centered 1920x1080 logical HUD stage)')
     p.add_argument('--print-scaled',action='store_true',
                    help='print "RENDER OUTPUT" (WxH) when bbport.ini selects an output other than 1080p')
+    p.add_argument('--print-ui-res',action='store_true',
+                   help='print "HUD_WIDTH UI_WIDTH UI_HEIGHT" for the output (run.sh)')
     p.add_argument('--print-fingerprint',action='store_true',
                    help='print the patch fingerprint of <out>/eboot.elf (PATCH_FINGERPRINTS)')
     a=p.parse_args()
@@ -495,6 +514,12 @@ def main():
     if a.print_scaled:
         sizes=scaled_sizes(read_settings(a.settings))
         if sizes: print(f'{sizes[0][0]}x{sizes[0][1]} {sizes[1][0]}x{sizes[1][1]}')
+        return
+    if a.print_ui_res:
+        resolution=ui_resolution(read_settings(a.settings),a.output_res,a.game_dir)
+        if resolution:
+            hud,ui=resolution
+            print(f'{hud} {ui[0]} {ui[1]}')
         return
     if a.print_preset_size:
         settings=read_settings(a.settings)

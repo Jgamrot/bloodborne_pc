@@ -146,6 +146,7 @@ private:
     u64 view_uses = 0;
 
     void Run();
+    void LogUpscalerState(const char* context, u32 w, u32 h, u32 ow, u32 oh);
     /// The scene depth and the motion vectors for frame generation (also with the upscaler off).
     void CaptureFrameGen();
     /// The UI target before the first UI draw (frame generation's picture without UI):

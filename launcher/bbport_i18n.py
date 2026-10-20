@@ -14,6 +14,8 @@ EN = {
     "Журнал": "Log",
     "Не удалось запустить: {}": "Could not start: {}",
     "\n— игра завершилась (код {}) —\n": "\n— the game exited (code {}) —\n",
+    "Предупреждение: не удалось прочитать журнал: {}\n":
+        "Warning: could not read the log: {}\n",
     # Launcher language
     "Язык лаунчера": "Launcher language",
     "Как в системе": "System",
@@ -28,6 +30,11 @@ EN = {
     "Выбрать папку сохранений": "Choose the saves folder",
     "Вернуть папку по умолчанию": "Back to the default folder",
     "Язык системы": "System language",
+    "Имя охотника": "Hunter name",
+    "Папка DLC": "DLC folder",
+    "Выбрать папку DLC": "Choose the DLC folder",
+    "Открыть папку DLC": "Open the DLC folder",
+    "Вернуть папку DLC по умолчанию": "Back to the default DLC folder",
     "По умолчанию: {}": "Default: {}",
     "Найдены сохранения": "Saves found",
     "Сохранений пока нет: игра создаст их здесь": "No saves yet: the game will create them here",
@@ -43,6 +50,15 @@ EN = {
     "Испанский": "Spanish",
     "Немецкий": "German",
     "Итальянский": "Italian",
+    # Controls
+    "Управление": "Controls",
+    "Схема управления": "Control Scheme",
+    "Отображение кнопок и раскладка в игре": "Button prompts and input layout",
+    "ПК — клавиатура и мышь": "PC — Keyboard & Mouse",
+    "Геймпад Xbox": "Xbox Controller",
+    "Геймпад PlayStation": "PlayStation Controller",
+    "Клавиатурные подсказки отсутствуют в дистрибутиве": "Keyboard prompt images are missing from this copy of the port",
+    "Подсказки Xbox отсутствуют в папке модов": "The Xbox prompts are missing from the mods folder",
     # Mods
     "Моды": "Mods",
     "Распакуйте каждый мод в отдельную папку (с dvdroot_ps4 или сразу с chr/, parts/ и т. п.). "
@@ -70,6 +86,12 @@ EN = {
     "Экран": "Display",
     "Разрешение вывода": "Output resolution",
     "Апскейлер дорисовывает кадр; Steam Deck — 720p": "The upscaler fills the frame; Steam Deck: 720p",
+    "Позиция HUD": "HUD position",
+    "Ультраширокие экраны: элементы у краёв или в центре 16:9":
+        "Ultrawide screens: HUD elements at the edges or in the centred 16:9 area",
+    "У краёв экрана (100%)": "Screen edges (100%)",
+    "Посередине (50%)": "Halfway (50%)",
+    "По центру (16:9)": "Centred (16:9)",
     "Полноэкранный режим": "Fullscreen",
     "Смена разрешения на лету": "Live resolution changes",
     "Без перезапуска, но медленнее на Steam Deck и старых GPU":
@@ -93,9 +115,22 @@ EN = {
     "Показывать FPS": "Show FPS",
     "Ассеты найдены": "Assets found",
     "Нет ассетов: tools/fetch_fsr4_assets.sh": "No assets: tools/fetch_fsr4_assets.sh",
+    "Нет ассетов (скачайте в строке ниже)": "No assets (download in the row below)",
+    "Ассеты FSR 4": "FSR 4 assets",
+    "Скачать ассеты": "Download assets",
+    "Проверить": "Verify",
+    "Не поддерживается": "Unsupported",
+    "Загрузка: {} из {}...": "Downloading: {} of {}...",
+    "Установлены: {} файлов в fsr4_shaders": "Installed: {} files in fsr4_shaders",
+    "Отсутствует {} из {} файлов в fsr4_shaders": "Missing {} of {} files in fsr4_shaders",
+    "Видеокарта не поддерживает FSR 4 (требуется INT8 dot product)": "GPU does not support FSR 4 (INT8 dot product required)",
+    "Ошибка загрузки FSR 4: {}": "FSR 4 download failed: {}",
     "Ассеты для выбранного режима найдены": "Assets for the selected mode found",
     "{}. Установите полный набор fsr4_411 в {}.": "{}. Install the full fsr4_411 set into {}.",
     "Сглаживание в разрешении вывода без модели FSR": "Anti-aliasing at the output resolution, no FSR model",
+    "DLSS работает только на видеокартах NVIDIA GeForce RTX":
+        "DLSS only works on NVIDIA GeForce RTX GPUs",
+    "Некорректное разрешение вывода": "Invalid output resolution",
     "Нет или повреждён файл {}": "Missing or damaged file {}",
     # Effects
     "Эффекты игры": "Game effects",
@@ -117,6 +152,28 @@ EN = {
     "Debug menu (левый touchpad / Tab; нужны шрифты)": "Debug menu (left touchpad / Tab; needs fonts)",
     "Установите DbgFont14h.ccm и DbgFont14h.tpf в dvdroot_ps4/font из мода Nexus #253":
         "Install DbgFont14h.ccm and DbgFont14h.tpf into dvdroot_ps4/font from Nexus mod #253",
+    # Enhancements
+    "Улучшения (PC)": "PC enhancements",
+    "Игровые файлы создаются при запуске; выключено — игра как в оригинале":
+        "Game files are made at start; off means the game as it shipped",
+    "Зеркало в Сне охотника: смена внешности": "Hunter's Dream mirror: change appearance",
+    "Два захватчика в поздних локациях": "Two invaders in the late areas",
+    "Перерождение у Алтаря отчаяния": "Rebirth at the Altar of Despair",
+    "Фонари: повышение уровня и хранилище": "Lamps: Level Up and Storage",
+    "Повторные бои с боссами у фонарей": "Boss rematches at their lamps",
+    # Cheats and tweaks
+    "Читы и твики": "Cheats and tweaks",
+    "Патчи игры 1.09: сложность, физика и камера": "Game patches for 1.09: difficulty, physics and camera",
+    "Бессмертие (здоровье не ниже 1 HP)": "Never die (health stays at 1 HP or above)",
+    "Враги не видят вас": "Enemies cannot see you",
+    "Враги не слышат вас": "Enemies cannot hear you",
+    "Rally не угасает": "Rally never decays",
+    "Управление выбранным врагом (R3)": "Control the targeted enemy (R3)",
+    "Без Rally": "No Rally",
+    "Камера дальше от персонажа": "Camera further from the character",
+    "Без автоповорота камеры при движении": "No camera auto-rotation while moving",
+    "Бег при меньшем наклоне стика": "Run with less stick tilt",
+    "Физика тел Dark Souls": "Dark Souls-style ragdoll physics",
     # Frame rate
     "Частота кадров": "Frame rate",
     "Режим": "Mode",

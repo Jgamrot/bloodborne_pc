@@ -21,6 +21,11 @@ void bb_menu_pointer_back(void) {}
 uint32_t bb_menu_pointer_buttons(void) { return 0; }
 void bb_mouse_camera_note_stick(uint8_t x, uint8_t y) { (void)x; (void)y; }
 int bb_mouse_camera_stick_x(void) { return -1; }
+void bb_bindings_load(const char *path) { (void)path; }
+void bb_bindings_apply(const bool *keys, int nkeys, uint32_t mouse, BindOutput *out) {
+    (void)keys; (void)nkeys; (void)mouse;
+    if (out) memset(out, 0, sizeof(*out));
+}
 uintptr_t runtime_lookup(const RuntimeExport *table, size_t count, const char *name) {
     (void)table; (void)count; (void)name;
     return 0;

@@ -8,7 +8,11 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 #include "engine_hooks.h"
 
 typedef int64_t (BB_GUEST_ABI *IntFn)(int64_t, int64_t);
@@ -69,7 +73,12 @@ static BB_GUEST_ABI int64_t replace_sum(int64_t a, int64_t b) {
 }
 
 int main(void) {
+#ifdef _WIN32
     unsigned char *image = VirtualAlloc(NULL, IMAGE, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    unsigned char *image = mmap(NULL, IMAGE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    assert(image != MAP_FAILED);
+#endif
     assert(image);
     memset(image, 0xcc, IMAGE);
     memcpy(image + SUM, sum_code, sizeof(sum_code));
@@ -108,9 +117,14 @@ int main(void) {
     BbSkip *add16 = bb_hook_skip(STEP + 5, step_code + 5, 5);
     assert(add16);
     bb_hooks_seal();
+#ifdef _WIN32
     DWORD old;
     assert(VirtualProtect(image, IMAGE, PAGE_EXECUTE_READ, &old));
     FlushInstructionCache(GetCurrentProcess(), image, IMAGE);
+#else
+    assert(mprotect(image, IMAGE, PROT_READ | PROT_EXEC) == 0);
+    __builtin___clear_cache((char *)image, (char *)image + IMAGE);
+#endif
 
     assert(((IntFn)(image + SUM))(5, 7) == 19);
     assert(seen_a == 5 && seen_b == 7 && entries == 1);

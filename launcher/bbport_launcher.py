@@ -9,11 +9,38 @@ Russian and English (bbport_i18n: the Russian text is the key).
 """
 
 import json
+import math
 import os
+import shutil
 import signal
 import sys
+import tempfile
+import threading
+import urllib.request
 from pathlib import Path
-from bbport_assets import fsr411_problem
+
+LAUNCHER_DIR = Path(__file__).resolve().parent
+if str(LAUNCHER_DIR) not in sys.path:
+    sys.path.insert(0, str(LAUNCHER_DIR))
+
+from bbport_assets import (
+    FSR4_BASE,
+    KEYBOARD_PROMPTS,
+    KEYBOARD_PROMPT_LAYOUT,
+    apply_control_scheme,
+    bundled_keyboard_prompts,
+    canonical_control_scheme,
+    detect_control_scheme,
+    fsr411_problem,
+    fsr4_files,
+    fsr4_gpu_supported,
+    fsr4_missing,
+    install_keyboard_prompts,
+    is_keyboard_prompt,
+    is_prompt_mod,
+    is_xbox_prompt,
+    validate_fsr4_file,
+)
 from bbport_i18n import language, set_language, tr
 
 import gi
@@ -22,24 +49,43 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
-PORT_DIR = Path(__file__).resolve().parent.parent  # native_probe (or the package's copy)
+PORT_DIR = LAUNCHER_DIR.parent  # native_probe (or the package's copy)
 sys.path.insert(0, str(PORT_DIR / 'scripts'))
 from mods import discover as discover_mods  # noqa: E402
 from patches import external_patches  # noqa: E402
 # Packaged (AppImage): generated files, saves and bbport.ini live in BB_DATA_DIR.
 PACKAGED = bool(os.environ.get("BB_PREBUILT"))
 DATA_DIR = Path(os.environ.get("BB_DATA_DIR", PORT_DIR))
-CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "bbport-launcher"
+CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "bbport-launcher"
 CONFIG_FILE = CONFIG_DIR / "settings.json"
 MAX_LOG_LINES = 5000
 
 # Choices: (label, value). The first entry is the default. Labels are translated when shown.
 UI_LANGUAGES = [("Как в системе", ""), ("Русский", "ru"), ("English", "en")]
+CONTROL_SCHEMES = [
+    ("ПК — клавиатура и мышь", "pc"),
+    ("Геймпад Xbox", "xbox"),
+    ("Геймпад PlayStation", "playstation"),
+]
 UPSCALERS = [("FSR 4", "fsr4"), ("FSR 4.1.1", "fsr411"), ("FSR 3", "fsr3"),
+             ("DLSS (NVIDIA GeForce RTX)", "dlss"),
              ("TAA (нативное сглаживание)", "taa"), ("Выключен", "off")]
 PRESETS = [("Native AA", 0), ("Quality (x1.5)", 1), ("Balanced (x1.7)", 2),
            ("Performance (x2)", 3), ("Ultra Performance (x3)", 4)]
-OUTPUT_RES = [("1280×720 (Steam Deck)", "1280x720"), ("1920×1080", "1920x1080"), ("2560×1440", "2560x1440"), ("3840×2160", "3840x2160")]
+OUTPUT_RES = [
+    ("1280×720 (Steam Deck)", "1280x720"),
+    ("1920×1080", "1920x1080"),
+    ("2560×1440", "2560x1440"),
+    ("3840×2160", "3840x2160"),
+    ("1280×800 (16:10)", "1280x800"),
+    ("2560×1080 (Ultrawide 21:9)", "2560x1080"),
+    ("3440×1440 (Ultrawide 21:9)", "3440x1440"),
+    ("3840×1600 (Ultrawide)", "3840x1600"),
+    ("5120×1440 (32:9 Super Ultrawide)", "5120x1440"),
+]
+# Ultrawide outputs: where the HUD's corner groups go (run.py hud_position, 0 = centred 16:9).
+HUD_POSITIONS = [("У краёв экрана (100%)", "100"), ("75%", "75"), ("Посередине (50%)", "50"),
+                 ("25%", "25"), ("По центру (16:9)", "0")]
 # Game effects (patches applied at start): bbport.ini key, title, default.
 EFFECTS = [
     ("effect_chromatic_aberration", "Хроматическая аберрация", True),
@@ -52,6 +98,27 @@ EFFECTS = [
     ("skip_intro", "Пропуск заставок при запуске", False),
     ("debug_camera", "Свободная камера (Cross + L3 / Space + Z)", False),
     ("debug_menu", "Debug menu (левый touchpad / Tab; нужны шрифты)", False),
+]
+# PC enhancements (scripts/enhancements.py): game files made at start; off is the game as shipped.
+ENHANCEMENTS = [
+    ("pc_mirror_appearance", "Зеркало в Сне охотника: смена внешности", False),
+    ("pc_two_invaders", "Два захватчика в поздних локациях", False),
+    ("pc_rebirth", "Перерождение у Алтаря отчаяния", False),
+    ("pc_enhanced_lamps", "Фонари: повышение уровня и хранилище", False),
+    ("pc_boss_rematches", "Повторные бои с боссами у фонарей", False),
+]
+# Cheats and gameplay tweaks: game patches for 1.09, off by default.
+CHEATS_AND_TWEAKS = [
+    ("cheat_no_death", "Бессмертие (здоровье не ниже 1 HP)", False),
+    ("cheat_stealth", "Враги не видят вас", False),
+    ("cheat_silent", "Враги не слышат вас", False),
+    ("cheat_rally_no_decay", "Rally не угасает", False),
+    ("cheat_enemy_control", "Управление выбранным врагом (R3)", False),
+    ("tweak_no_rally", "Без Rally", False),
+    ("tweak_camera_distance", "Камера дальше от персонажа", False),
+    ("tweak_no_camera_rotation", "Без автоповорота камеры при движении", False),
+    ("tweak_easy_run", "Бег при меньшем наклоне стика", False),
+    ("tweak_ragdoll", "Физика тел Dark Souls", False),
 ]
 MODEL_LOD = [("Как в игре", "0"), ("Максимальная (-2)", "-2"), ("Ниже (1)", "1"),
              ("Минимальная (2)", "2")]
@@ -67,12 +134,15 @@ READBACKS = [("Relaxed (по умолчанию)", ""), ("Выключены", "
 
 DEFAULTS = {
     "ui_language": "",
+    "control_scheme": "xbox",
     "game_dir": "" if PACKAGED else str(PORT_DIR.parent / "CUSA03173"),
     "user_dir": "",
     "mods_dir": "",
     "mods_enabled": True,
     "patches_dir": "",
     "language": "1",
+    "player_name": "",
+    "dlc_dir": "",
     "fullscreen": False,
     "hdr": False,
     "present_mode": "Mailbox",
@@ -90,41 +160,116 @@ DEFAULTS = {
 # bbport.ini keys the launcher edits; the rest of the file is kept.
 INI_DEFAULTS = {
     "upscaler": "dlss",
-    "preset": "4",
+    "preset": "2",
     "sharpen": "1",
     "sharpness": "0.50",
     "object_motion": "1",
     "show_fps": "1",
     "output_res": "1920x1080",
+    "hud_position": "100",
     "model_lod": "0",
     "live_resolution": "0",
-    **{key: "1" if default else "0" for key, _, default in EFFECTS},
+    **{key: "1" if default else "0"
+       for key, _, default in EFFECTS + ENHANCEMENTS + CHEATS_AND_TWEAKS},
 }
+
+
+BOOL_SETTINGS = {"mods_enabled", "fullscreen", "hdr", "mangohud", "frame_stats",
+                 "gpu_profile", "vk_validation"}
+STRING_SETTINGS = {"ui_language", "control_scheme", "game_dir", "user_dir", "mods_dir", "patches_dir",
+                   "language", "player_name", "dlc_dir", "present_mode", "fps_mode",
+                   "draw_pipe", "readbacks", "extra_env"}
+
+
+def setting_value(key, value):
+    """The value as the launcher uses it, or None when it has the wrong type for `key`."""
+    if key in BOOL_SETTINGS:
+        return value if isinstance(value, bool) else None
+    if key in STRING_SETTINGS:
+        return value if isinstance(value, str) else None
+    if key == "fps_limit":
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        if not math.isfinite(value):
+            return None
+        return max(0, min(480, int(value)))
+    return value
 
 
 def load_settings():
     settings = dict(DEFAULTS)
     try:
-        settings.update(json.loads(CONFIG_FILE.read_text(encoding='utf-8')))
-    except (OSError, ValueError):
-        pass
+        data = json.loads(CONFIG_FILE.read_text(encoding='utf-8', errors='replace'))
+    except (OSError, ValueError, TypeError):
+        return settings
+    if not isinstance(data, dict):
+        return settings
+    for key, value in data.items():
+        if key not in DEFAULTS:
+            settings[key] = value
+            continue
+        value = setting_value(key, value)
+        if value is not None:
+            settings[key] = value
     return settings
 
 
+def atomic_write_text(path, text):
+    """Writes `text` through a temporary file in the target directory, then replaces `path`."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding='utf-8') as temp:
+            temp.write(text)
+            temp.flush()
+            os.fsync(temp.fileno())
+        os.replace(temp_name, path)
+        # The file's fsync does not cover the rename: sync the directory entry too.
+        try:
+            directory = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        except OSError:
+            return
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    except BaseException:
+        try:
+            os.unlink(temp_name)
+        except OSError:
+            pass
+        raise
+
+
 def save_settings(settings):
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    CONFIG_FILE.write_text(json.dumps(settings, indent=2, ensure_ascii=False), encoding='utf-8')
+    atomic_write_text(CONFIG_FILE, json.dumps(settings, indent=2, ensure_ascii=False))
 
 
 def ini_path():
-    return Path(os.environ.get("BB_CONFIG", DATA_DIR / "bbport.ini"))
+    return Path(os.environ.get("BB_CONFIG") or DATA_DIR / "bbport.ini")
+
+
+def ini_int(values, key, fallback):
+    try:
+        return int(str(values.get(key, fallback)).strip())
+    except (TypeError, ValueError):
+        return fallback
+
+
+def ini_float(values, key, fallback):
+    try:
+        value = float(str(values.get(key, fallback)).strip())
+    except (TypeError, ValueError):
+        return fallback
+    return value if math.isfinite(value) else fallback
 
 
 def load_ini():
     values = dict(INI_DEFAULTS)
     lines = []
     try:
-        lines = ini_path().read_text(encoding='utf-8').splitlines()
+        lines = ini_path().read_text(encoding='utf-8', errors='replace').splitlines()
     except OSError:
         pass
     for line in lines:
@@ -151,7 +296,7 @@ def save_ini(values, lines):
     for key, value in values.items():
         if key not in written:
             out.append(f"{key}={value}")
-    ini_path().write_text("\n".join(out) + "\n", encoding='utf-8')
+    atomic_write_text(ini_path(), "\n".join(out) + "\n")
 
 
 def patches_dir(settings):
@@ -163,10 +308,26 @@ def game_environment(s):
     env = dict(os.environ)
     env["BB_GAME_DIR"] = str(Path(s["game_dir"]).expanduser())
     if s["user_dir"]:
-        env["BB_USER_DIR"] = s["user_dir"]
+        env["BB_USER_DIR"] = str(Path(s["user_dir"]).expanduser())
+    if s.get("player_name", "").strip():
+        env["BB_USER_NAME"] = s["player_name"].strip()
+    if s.get("dlc_dir", "").strip():
+        env["BB_DLC_DIR"] = str(Path(s["dlc_dir"]).expanduser())
     env["BB_MODS_DIR"] = str(Path(s.get("mods_dir") or DATA_DIR / "mods").expanduser())
     env["BB_MODS_CONFIG"] = str(DATA_DIR / "mods.json")
     env["BB_MODS_ENABLED"] = "1" if s.get("mods_enabled", True) else "0"
+    scheme = canonical_control_scheme(s.get("control_scheme"))
+    keyboard = (scheme == "pc")
+    if not keyboard and s.get("mods_enabled", True):
+        try:
+            mods_cfg = DATA_DIR / "mods.json"
+            if mods_cfg.is_file():
+                cfg = json.loads(mods_cfg.read_text(encoding="utf-8"))
+                keyboard = any(is_keyboard_prompt(n) for n in cfg.get("enabled", []))
+        except (OSError, ValueError):
+            pass
+    env["BB_BUTTON_PROMPTS"] = "Keyboard" if keyboard else ""
+    env["BB_KEY_PROMPT_IMAGES"] = "1" if keyboard else "0"
     env["BB_PATCHES_DIR"] = str(patches_dir(s))
     env["BB_PATCHES_CONFIG"] = str(DATA_DIR / "patches.json")
     env["BB_LANGUAGE"] = s["language"]
@@ -213,18 +374,27 @@ def open_folder(window, path):
 
 
 def combo_row(title, subtitle, choices, current):
+    values = [value for _, value in choices]
+    if current not in values:
+        choices = [*choices, (str(current), current)]
+        values.append(current)
     model = Gtk.StringList.new([tr(label) for label, _ in choices])
     row = Adw.ComboRow(title=title, model=model)
     if subtitle:
         row.set_subtitle(subtitle)
-    values = [value for _, value in choices]
-    row.set_selected(values.index(current) if current in values else 0)
+    row.set_selected(values.index(current))
     row.values = values
     return row
 
 
 def combo_value(row):
     return row.values[row.get_selected()]
+
+
+def invalid_utf8(error):
+    """Whether `error` is GLib's UTF-8 conversion failure (domain as a name or a quark)."""
+    quark = GLib.convert_error_quark() if hasattr(GLib, "convert_error_quark") else None
+    return getattr(error, "domain", None) in ("g_convert_error", quark)
 
 
 class FolderList:
@@ -252,7 +422,9 @@ class LauncherWindow(Adw.ApplicationWindow):
         set_language(self.settings.get("ui_language", ""))
         self.ini, self.ini_lines = load_ini()
         self.process = None
+        self._stopping_pid = None
         self.stream = None
+        self.downloading_fsr4 = False
         self.build()
         self.connect("close-request", self.on_close)
 
@@ -283,6 +455,7 @@ class LauncherWindow(Adw.ApplicationWindow):
         self.update_launch_button()
         self.update_game_status()
         self.update_user_status()
+        self.update_dlc_status()
         self.update_upscaler_status()
 
     def update_launch_button(self):
@@ -326,9 +499,37 @@ class LauncherWindow(Adw.ApplicationWindow):
                                       self.on_reset_user)
         self.user_row.add_suffix(self.user_reset)
         game.add(self.user_row)
+        self.player_row = Adw.EntryRow(title=tr("Имя охотника"),
+                                       text=self.settings.get("player_name", ""))
+        if hasattr(self.player_row, "set_subtitle"):
+            self.player_row.set_subtitle("BB_USER_NAME")
+        else:
+            hint = Gtk.Label(label="BB_USER_NAME")
+            hint.add_css_class("dim-label")
+            self.player_row.add_suffix(hint)
+        game.add(self.player_row)
+        self.dlc_row = Adw.ActionRow(title=tr("Папка DLC"))
+        self.dlc_row.add_suffix(flat_button("folder-open-symbolic", tr("Выбрать папку DLC"),
+                                            self.on_choose_dlc))
+        self.dlc_row.add_suffix(flat_button("system-file-manager-symbolic", tr("Открыть папку DLC"),
+                                            lambda _b: open_folder(self, self.dlc_dir())))
+        self.dlc_reset = flat_button("edit-undo-symbolic", tr("Вернуть папку DLC по умолчанию"),
+                                     self.on_reset_dlc)
+        self.dlc_row.add_suffix(self.dlc_reset)
+        game.add(self.dlc_row)
         self.language_row = combo_row(tr("Язык системы"), None, LANGUAGES, self.settings["language"])
         game.add(self.language_row)
         page.add(game)
+
+        controls = Adw.PreferencesGroup(
+            title=tr("Управление"),
+            description=tr("Отображение кнопок и раскладка в игре"))
+        self.control_scheme_row = combo_row(
+            tr("Схема управления"), None, CONTROL_SCHEMES,
+            self.current_control_scheme())
+        self.control_scheme_row.connect("notify::selected", self.on_control_scheme_changed)
+        controls.add(self.control_scheme_row)
+        page.add(controls)
 
         self.mods_group = Adw.PreferencesGroup(
             title=tr("Моды"), description=tr(
@@ -371,6 +572,11 @@ class LauncherWindow(Adw.ApplicationWindow):
                                     tr("Апскейлер дорисовывает кадр; Steam Deck — 720p"),
                                     OUTPUT_RES, self.ini.get("output_res", "1920x1080"))
         screen.add(self.output_row)
+        self.hud_row = combo_row(
+            tr("Позиция HUD"),
+            tr("Ультраширокие экраны: элементы у краёв или в центре 16:9"),
+            HUD_POSITIONS, self.ini.get("hud_position", "100"))
+        screen.add(self.hud_row)
         self.live_row = combo_row(tr("Смена разрешения на лету"),
                                   tr("Без перезапуска, но медленнее на Steam Deck и старых GPU"),
                                   LIVE_RESOLUTION, self.ini.get("live_resolution", "0"))
@@ -391,7 +597,8 @@ class LauncherWindow(Adw.ApplicationWindow):
         self.upscaler_row = combo_row(tr("Апскейлер"), None, UPSCALERS, self.ini["upscaler"])
         self.upscaler_row.connect("notify::selected", lambda *_: self.update_upscaler_status())
         upscaler.add(self.upscaler_row)
-        self.preset_row = combo_row(tr("Пресет"), None, PRESETS, int(self.ini.get("preset", "4")))
+        self.preset_row = combo_row(tr("Пресет"), None, PRESETS,
+                                    ini_int(self.ini, "preset", int(INI_DEFAULTS["preset"])))
         self.preset_row.connect("notify::selected", lambda *_: self.update_upscaler_status())
         self.output_row.connect("notify::selected", lambda *_: self.update_upscaler_status())
         upscaler.add(self.preset_row)
@@ -401,8 +608,20 @@ class LauncherWindow(Adw.ApplicationWindow):
         self.sharpness_row = Adw.SpinRow.new_with_range(0.0, 2.0, 0.05)
         self.sharpness_row.set_title(tr("Сила резкости"))
         self.sharpness_row.set_digits(2)
-        self.sharpness_row.set_value(float(self.ini.get("sharpness", "0.5")))
+        self.sharpness_row.set_value(max(0.0, min(2.0, ini_float(
+            self.ini, "sharpness", float(INI_DEFAULTS["sharpness"])))))
         upscaler.add(self.sharpness_row)
+
+        self.fsr4_row = Adw.ActionRow(title=tr("Ассеты FSR 4"))
+        self.fsr4_progress = Gtk.ProgressBar(hexpand=True, valign=Gtk.Align.CENTER)
+        self.fsr4_progress.set_margin_start(12)
+        self.fsr4_progress.set_margin_end(12)
+        self.fsr4_button = Gtk.Button(valign=Gtk.Align.CENTER)
+        self.fsr4_button.connect("clicked", self.on_fetch_fsr4)
+        self.fsr4_row.add_suffix(self.fsr4_progress)
+        self.fsr4_row.add_suffix(self.fsr4_button)
+        upscaler.add(self.fsr4_row)
+
         self.motion_row = Adw.SwitchRow(
             title=tr("Векторы движения объектов"),
             subtitle=tr("Меньше гостинга на персонажах; стоит около 10% FPS"),
@@ -428,6 +647,28 @@ class LauncherWindow(Adw.ApplicationWindow):
             self.effect_rows[key] = row
             effects.add(row)
         page.add(effects)
+
+        enhancements = Adw.PreferencesGroup(
+            title=tr("Улучшения (PC)"),
+            description=tr("Игровые файлы создаются при запуске; выключено — игра как в оригинале"))
+        self.enhancement_rows = {}
+        for key, title, default in ENHANCEMENTS:
+            row = Adw.SwitchRow(title=tr(title),
+                                active=self.ini.get(key, "1" if default else "0") == "1")
+            self.enhancement_rows[key] = row
+            enhancements.add(row)
+        page.add(enhancements)
+
+        cheats = Adw.PreferencesGroup(
+            title=tr("Читы и твики"),
+            description=tr("Патчи игры 1.09: сложность, физика и камера"))
+        self.cheat_rows = {}
+        for key, title, default in CHEATS_AND_TWEAKS:
+            row = Adw.SwitchRow(title=tr(title),
+                                active=self.ini.get(key, "1" if default else "0") == "1")
+            self.cheat_rows[key] = row
+            cheats.add(row)
+        page.add(cheats)
 
         frames = Adw.PreferencesGroup(title=tr("Частота кадров"))
         self.fps_row = combo_row(tr("Режим"), tr("Какой патч частоты кадров применить к игре"),
@@ -497,6 +738,15 @@ class LauncherWindow(Adw.ApplicationWindow):
         return Path(self.settings["user_dir"]).expanduser() if self.settings["user_dir"] \
             else DATA_DIR / "user"
 
+    def dlc_dir(self):
+        return Path(self.settings["dlc_dir"]).expanduser() if self.settings["dlc_dir"] \
+            else DATA_DIR / "dlc"
+
+    def update_dlc_status(self):
+        custom = bool(self.settings["dlc_dir"])
+        self.dlc_row.set_subtitle(str(self.dlc_dir()) if custom else tr("не выбрана"))
+        self.dlc_reset.set_sensitive(custom)
+
     def update_user_status(self):
         path = self.user_dir()
         custom = bool(self.settings["user_dir"])
@@ -534,18 +784,141 @@ class LauncherWindow(Adw.ApplicationWindow):
         self.update_user_status()
         self.store()
 
+    def on_choose_dlc(self, _button):
+        def chosen(path):
+            self.settings["dlc_dir"] = path
+            self.update_dlc_status()
+            self.store()
+        self.choose_folder(tr("Папка DLC"), self.dlc_dir(), chosen)
+
+    def on_reset_dlc(self, _button):
+        self.settings["dlc_dir"] = ""
+        self.update_dlc_status()
+        self.store()
+
+    def refresh_fsr4_status(self):
+        if not hasattr(self, "fsr4_row"):
+            return
+        supported = fsr4_gpu_supported(PORT_DIR)
+        total = len(fsr4_files())
+        missing = len(fsr4_missing())
+        if self.downloading_fsr4:
+            self.fsr4_button.set_sensitive(False)
+            self.fsr4_progress.set_visible(True)
+            return
+        if supported is False:
+            self.fsr4_row.set_subtitle(tr("Видеокарта не поддерживает FSR 4 (требуется INT8 dot product)"))
+            self.fsr4_progress.set_visible(False)
+            self.fsr4_button.set_sensitive(False)
+            self.fsr4_button.set_label(tr("Не поддерживается"))
+        elif missing == 0:
+            self.fsr4_row.set_subtitle(tr("Установлены: {} файлов в fsr4_shaders").format(total))
+            self.fsr4_progress.set_visible(False)
+            self.fsr4_button.set_sensitive(True)
+            self.fsr4_button.set_label(tr("Проверить"))
+        else:
+            self.fsr4_row.set_subtitle(tr("Отсутствует {} из {} файлов в fsr4_shaders").format(missing, total))
+            self.fsr4_progress.set_fraction((total - missing) / total)
+            self.fsr4_progress.set_visible(True)
+            self.fsr4_button.set_sensitive(True)
+            self.fsr4_button.set_label(tr("Скачать ассеты"))
+
+    def on_fetch_fsr4(self, _button):
+        if self.downloading_fsr4:
+            return
+        missing = fsr4_missing()
+        if not missing:
+            self.refresh_fsr4_status()
+            dialog = Adw.MessageDialog.new(
+                self,
+                tr("Ассеты FSR 4"),
+                tr("Все 189 файлов проверены и установлены в fsr4_shaders."),
+            )
+            dialog.add_response("ok", tr("Закрыть"))
+            dialog.present()
+            return
+        self.downloading_fsr4 = True
+        self.fsr4_button.set_sensitive(False)
+        self.fsr4_progress.set_visible(True)
+        folder = PORT_DIR / "fsr4_shaders"
+        total = len(fsr4_files())
+
+        def work():
+            error = None
+            try:
+                folder.mkdir(parents=True, exist_ok=True)
+                for name in missing:
+                    part = folder / (name + ".part")
+                    target = folder / name
+                    req = urllib.request.Request(
+                        f"{FSR4_BASE}/{name}",
+                        headers={"User-Agent": "bbport-launcher"},
+                    )
+                    with urllib.request.urlopen(req, timeout=30) as resp:
+                        part.write_bytes(resp.read())
+                    if not validate_fsr4_file(part):
+                        part.unlink(missing_ok=True)
+                        raise ValueError(f"Corrupted or invalid asset: {name}")
+                    part.replace(target)
+                    done_count = total - len(fsr4_missing())
+                    fraction = done_count / total
+                    GLib.idle_add(
+                        lambda f=fraction, d=done_count: self.update_fsr4_download_progress(f, d, total) and False
+                    )
+
+                if shutil.which("spirv-cross") and shutil.which("glslangValidator"):
+                    opt_script = PORT_DIR / "tools" / "fsr4_optimize.sh"
+                    if opt_script.is_file():
+                        subprocess.run(
+                            ["bash", str(opt_script)],
+                            cwd=str(PORT_DIR),
+                            capture_output=True,
+                            timeout=60,
+                        )
+            except Exception as ex:
+                error = ex
+            finally:
+                GLib.idle_add(lambda: self.on_fsr4_download_finished(error) and False)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def update_fsr4_download_progress(self, fraction, done, total):
+        self.fsr4_progress.set_fraction(fraction)
+        self.fsr4_row.set_subtitle(tr("Загрузка: {} из {}...").format(done, total))
+
+    def on_fsr4_download_finished(self, error):
+        self.downloading_fsr4 = False
+        self.refresh_fsr4_status()
+        self.update_upscaler_status()
+        if error:
+            dialog = Adw.MessageDialog.new(
+                self,
+                tr("Ошибка загрузки FSR 4: {}").format(error),
+                None,
+            )
+            dialog.add_response("ok", tr("Закрыть"))
+            dialog.present()
+
     def update_upscaler_status(self):
         value = combo_value(self.upscaler_row)
+        if hasattr(self, "fsr4_row"):
+            self.refresh_fsr4_status()
         if value == "fsr4":
-            ok = (PORT_DIR / "fsr4_shaders").is_dir()
-            hint = tr("Ассеты найдены") if ok else tr("Нет ассетов: tools/fetch_fsr4_assets.sh")
+            missing = fsr4_missing()
+            ok = len(missing) == 0
+            hint = tr("Ассеты найдены") if ok else tr("Нет ассетов (скачайте в строке ниже)")
         elif value == "fsr411":
             directory = Path(os.environ["BB_FSR411_DIR"]) if os.environ.get("BB_FSR411_DIR") else (
                 PORT_DIR / "fsr4_411" if (PORT_DIR / "fsr4_411").is_dir() else DATA_DIR / "fsr4_411")
-            problem = fsr411_problem(directory, combo_value(self.output_row),
-                                     int(combo_value(self.preset_row)))
+            try:
+                problem = fsr411_problem(directory, combo_value(self.output_row),
+                                         int(combo_value(self.preset_row)))
+            except (TypeError, ValueError):
+                problem = tr("Некорректное разрешение вывода")
             hint = tr("Ассеты для выбранного режима найдены") if not problem else (
                 tr("{}. Установите полный набор fsr4_411 в {}.").format(problem, directory))
+        elif value == "dlss":
+            hint = tr("DLSS работает только на видеокартах NVIDIA GeForce RTX")
         else:
             hint = tr("Сглаживание в разрешении вывода без модели FSR") if value == "taa" else None
         self.preset_row.set_sensitive(value not in ("taa", "off"))
@@ -571,6 +944,7 @@ class LauncherWindow(Adw.ApplicationWindow):
     def store(self):
         s = self.settings
         s["language"] = combo_value(self.language_row)
+        s["player_name"] = self.player_row.get_text().strip()
         s["fullscreen"] = self.fullscreen_row.get_active()
         s["present_mode"] = combo_value(self.present_row)
         s["hdr"] = self.hdr_row.get_active()
@@ -584,6 +958,13 @@ class LauncherWindow(Adw.ApplicationWindow):
         s["vk_validation"] = self.validation_row.get_active()
         s["extra_env"] = self.extra_row.get_text().strip()
         s["mods_enabled"] = self.mods_enabled_row.get_active()
+        if hasattr(self, "control_scheme_row"):
+            s["control_scheme"] = combo_value(self.control_scheme_row)
+            try:
+                apply_control_scheme(s["control_scheme"], self.mods_dir(), DATA_DIR / "mods.json", PORT_DIR,
+                                     self._update_ini_for_scheme)
+            except (OSError, ValueError):
+                pass
         self.save_mod_profile()
         self.save_patch_profile()
         save_settings(s)
@@ -595,9 +976,13 @@ class LauncherWindow(Adw.ApplicationWindow):
             "object_motion": "1" if self.motion_row.get_active() else "0",
             "show_fps": "1" if self.show_fps_row.get_active() else "0",
             "output_res": combo_value(self.output_row),
+            "hud_position": combo_value(self.hud_row),
             "model_lod": combo_value(self.lod_row),
             "live_resolution": combo_value(self.live_row),
             **{key: "1" if row.get_active() else "0" for key, row in self.effect_rows.items()},
+            **{key: "1" if row.get_active() else "0"
+               for key, row in self.enhancement_rows.items()},
+            **{key: "1" if row.get_active() else "0" for key, row in self.cheat_rows.items()},
         })
         save_ini(self.ini, self.ini_lines)
         self.ini, self.ini_lines = load_ini()
@@ -605,18 +990,58 @@ class LauncherWindow(Adw.ApplicationWindow):
     def environment(self):
         return game_environment(self.settings)
 
+    # --- controls ------------------------------------------------------------------------
+
+    def current_control_scheme(self):
+        val = self.settings.get("control_scheme")
+        return detect_control_scheme(self.mods_dir(), DATA_DIR / "mods.json", fallback=val)
+
+    def _update_ini_for_scheme(self, key_layout, mouse_camera=True):
+        self.ini.update(key_layout)
+        if mouse_camera:
+            self.ini["mouse_camera"] = "1"
+        save_ini(self.ini, self.ini_lines)
+
+    def on_control_scheme_changed(self, row, _param):
+        choice = combo_value(row)
+        self.settings["control_scheme"] = choice
+        try:
+            apply_control_scheme(choice, self.mods_dir(), DATA_DIR / "mods.json", PORT_DIR,
+                                 self._update_ini_for_scheme)
+        except ValueError as error:
+            if hasattr(self, "toasts"):
+                self.toasts.add_toast(Adw.Toast.new(str(error)))
+        self.refresh_mods()
+
     # --- mods ----------------------------------------------------------------------------
 
     def mods_dir(self):
         return Path(self.settings.get("mods_dir") or DATA_DIR / "mods").expanduser()
 
     def save_mod_profile(self):
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
         rows = self.mod_list.rows
-        profile = {"order": [name for name, _ in rows],
-                   "disabled": [name for name, row in rows if not row.get_active()]}
-        (DATA_DIR / "mods.json").write_text(
-            json.dumps(profile, indent=2, ensure_ascii=False) + "\n", encoding='utf-8')
+        content_names = {name for name, _ in rows}
+        try:
+            existing = json.loads((DATA_DIR / "mods.json").read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            existing = {}
+        existing_disabled = set(existing.get("disabled", []))
+        existing_enabled = set(existing.get("enabled", []))
+        prompt_disabled = [n for n in existing_disabled if n not in content_names]
+        prompt_enabled = [n for n in existing_enabled if n not in content_names]
+        existing_order = existing.get("order", [])
+        prompt_order = [n for n in existing_order if n not in content_names]
+
+        order = [name for name, _ in rows] + prompt_order
+        disabled = [name for name, row in rows if not row.get_active()] + prompt_disabled
+        enabled = [name for name, row in rows if row.get_active()] + prompt_enabled
+        profile = {
+            "order": order,
+            "disabled": sorted(set(disabled)),
+            "enabled": sorted(set(enabled)),
+        }
+        atomic_write_text(DATA_DIR / "mods.json",
+                          json.dumps(profile, indent=2, ensure_ascii=False) + "\n")
 
     def refresh_mods(self):
         self.mod_list.clear()
@@ -627,6 +1052,7 @@ class LauncherWindow(Adw.ApplicationWindow):
             profile = {}
         available = discover_mods(self.mods_dir())
         order = list(dict.fromkeys(n for n in [*profile.get("order", []), *available] if n in available))
+        order = [n for n in order if not is_prompt_mod(n)]
         for name in order:
             row = Adw.SwitchRow(title=name, active=name not in profile.get("disabled", []))
             row.add_suffix(flat_button("go-up-symbolic", tr("Загрузить раньше"),
@@ -676,8 +1102,7 @@ class LauncherWindow(Adw.ApplicationWindow):
         shown = {key for key, _ in self.patch_list.rows}
         profile = {"enabled": sorted({k for k in profile.get("enabled", []) if k not in shown} | set(enabled)),
                    "disabled": sorted({k for k in profile.get("disabled", []) if k not in shown} | set(disabled))}
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(profile, indent=2, ensure_ascii=False) + "\n", encoding='utf-8')
+        atomic_write_text(path, json.dumps(profile, indent=2, ensure_ascii=False) + "\n")
 
     def refresh_patches(self):
         self.patch_list.clear()
@@ -765,10 +1190,19 @@ class LauncherWindow(Adw.ApplicationWindow):
     def read_line(self):
         self.stream.read_line_async(GLib.PRIORITY_DEFAULT, None, self.on_line)
 
+    def process_active(self):
+        return bool(self.process) and not (self.process.get_if_exited()
+                                           or self.process.get_if_signaled())
+
     def on_line(self, stream, result):
         try:
             line, _length = stream.read_line_finish_utf8(result)
-        except GLib.Error:
+        except GLib.Error as error:
+            self.append_log(tr("Предупреждение: не удалось прочитать журнал: {}\n").format(
+                getattr(error, "message", error)))
+            # Invalid UTF-8 consumes the line; keep draining even if the game just exited.
+            if invalid_utf8(error) or self.process_active():
+                self.read_line()
             return
         if line is None:
             return
@@ -778,15 +1212,24 @@ class LauncherWindow(Adw.ApplicationWindow):
     def stop_game(self):
         if not self.process:
             return
-        pid = int(self.process.get_identifier())
         try:
-            os.killpg(pid, signal.SIGTERM)
-        except OSError:
+            pid = int(self.process.get_identifier())
+        except (TypeError, ValueError):
+            self.process.force_exit()
+            return
+        self._stopping_pid = pid
+        if pid > 1:
+            try:
+                os.killpg(pid, signal.SIGTERM)
+            except OSError:
+                self.process.force_exit()
+        else:
             self.process.force_exit()
         GLib.timeout_add_seconds(3, self.kill_if_running, pid)
 
     def kill_if_running(self, pid):
-        if self.process:
+        if (pid > 1 and self.process_active()
+                and getattr(self, "_stopping_pid", None) == pid):
             try:
                 os.killpg(pid, signal.SIGKILL)
             except OSError:
@@ -799,7 +1242,9 @@ class LauncherWindow(Adw.ApplicationWindow):
         except GLib.Error:
             pass
         status = process.get_exit_status() if process.get_if_exited() else -1
-        self.process = None
+        if process is self.process:
+            self.process = None
+            self._stopping_pid = None
         self.update_launch_button()
         self.update_game_status()
         self.append_log(tr("\n— игра завершилась (код {}) —\n").format(status))
