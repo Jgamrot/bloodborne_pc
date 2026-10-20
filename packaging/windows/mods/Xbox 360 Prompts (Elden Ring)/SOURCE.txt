@@ -1,6 +1,0 @@
-Xbox (and switch) UI for Bloodborne, version 0.3.2
-Elden Ring style Xbox 360 prompts
-Creator: Dommo
-Source: https://www.nexusmods.com/bloodborne/mods/30
-The creator allows uploads to other sites with credit, per the mod page's
-Credits and distribution permission section.

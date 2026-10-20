@@ -18,7 +18,7 @@ def load(name, path):
 
 run = load('bb_run', 'run.py')
 sys.path.insert(0, str(ROOT / 'launcher'))
-launcher = load('bb_launcher', 'launcher/bbport_launcher_win.py')
+launcher = load('bb_launcher', 'launcher/bbport_net.py')
 import bbport_coop as coop
 
 
@@ -120,9 +120,9 @@ class HuntersDreamTests(unittest.TestCase):
     def test_pool_is_shown_unless_switched_off(self):
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop('BB_HUNTERS_DREAM', None)
-            shown = load('bb_launcher_shown', 'launcher/bbport_launcher_win.py')
+            shown = load('bb_launcher_shown', 'launcher/bbport_net.py')
         with mock.patch.dict(os.environ, {'BB_HUNTERS_DREAM': '0'}):
-            hidden = load('bb_launcher_hidden', 'launcher/bbport_launcher_win.py')
+            hidden = load('bb_launcher_hidden', 'launcher/bbport_net.py')
         self.assertTrue(shown.HUNTERS_DREAM_POOL)
         self.assertFalse(hidden.HUNTERS_DREAM_POOL)
 

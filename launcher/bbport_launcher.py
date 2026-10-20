@@ -72,6 +72,29 @@ UPSCALERS = [("FSR 4", "fsr4"), ("FSR 4.1.1", "fsr411"), ("FSR 3", "fsr3"),
              ("TAA (нативное сглаживание)", "taa"), ("Выключен", "off")]
 PRESETS = [("Native AA", 0), ("Quality (x1.5)", 1), ("Balanced (x1.7)", 2),
            ("Performance (x2)", 3), ("Ultra Performance (x3)", 4)]
+PRESET_SCALES = [1.0, 1.5, 1.7, 2.0, 3.0]
+
+
+def compute_internal_resolution(output_res_str, preset_idx, custom_render_res=None):
+    """(render_w, render_h, scale): calculates the internal rendering resolution for a preset and output resolution."""
+    if custom_render_res:
+        try:
+            w, h = (int(v) for v in str(custom_render_res).lower().split("x"))
+            return w, h, None
+        except (ValueError, TypeError):
+            pass
+    try:
+        out_w, out_h = (int(v) for v in str(output_res_str).lower().split("x"))
+    except (ValueError, TypeError):
+        out_w, out_h = 1920, 1080
+    try:
+        idx = max(0, min(int(preset_idx), len(PRESET_SCALES) - 1))
+    except (ValueError, TypeError):
+        idx = 2
+    scale = PRESET_SCALES[idx]
+    render_w = max(2, round(out_w / scale / 2) * 2)
+    render_h = max(2, round(out_h / scale / 2) * 2)
+    return render_w, render_h, scale
 OUTPUT_RES = [
     ("1280×720 (Steam Deck)", "1280x720"),
     ("1920×1080", "1920x1080"),
@@ -925,6 +948,28 @@ class LauncherWindow(Adw.ApplicationWindow):
         self.sharpen_row.set_sensitive(value != "off")
         self.sharpness_row.set_sensitive(value != "off")
         self.upscaler_row.set_subtitle(hint or "")
+
+        if hasattr(self, "preset_row"):
+            try:
+                preset_idx = int(combo_value(self.preset_row))
+            except (TypeError, ValueError):
+                preset_idx = 2
+            out_str = combo_value(self.output_row) if hasattr(self, "output_row") else "1920x1080"
+            custom_res = self.ini.get("render_res")
+            rw, rh, scale = compute_internal_resolution(out_str, preset_idx, custom_res)
+            try:
+                ow, oh = (int(v) for v in str(out_str).lower().split("x"))
+            except (ValueError, TypeError):
+                ow, oh = 1920, 1080
+            if value in ("taa", "off"):
+                preset_desc = tr("Нативное разрешение: {} × {}").format(ow, oh)
+            elif custom_res:
+                preset_desc = tr("Внутреннее разрешение: {} × {} (ручной ввод) → вывод {} × {}").format(
+                    rw, rh, ow, oh)
+            else:
+                preset_desc = tr("Внутреннее разрешение: {} × {} ({:.1f}×) → вывод {} × {}").format(
+                    rw, rh, scale, ow, oh)
+            self.preset_row.set_subtitle(preset_desc)
 
     def update_game_status(self):
         path = self.game_dir()

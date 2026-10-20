@@ -104,13 +104,13 @@ if [[ ${hud_width:-0} =~ ^[0-9]+$ ]] && (( hud_width > 0 )); then
         generated+=(--generated "$out/hud_layout")
     fi
 fi
-# The Xbox button prompts the package ships (packaging/windows/mods in a source checkout).
+# The Xbox button prompts (seeded in mods/).
 bundled=()
-for folder in "mods/Xbox 360 Prompts (Elden Ring)" "packaging/windows/mods/Xbox 360 Prompts (Elden Ring)"; do
+for folder in "mods/Xbox 360 Prompts (Elden Ring)"; do
     if [[ -d $folder ]]; then bundled=(--bundled "$folder"); break; fi
 done
 # The keyboard prompts (PCBButtons by JinkiJinn), seeded switched off.
-for folder in "bundled/Keyboard Prompts (PCBButtons)" "packaging/windows/bundled/Keyboard Prompts (PCBButtons)"; do
+for folder in "bundled/Keyboard Prompts (PCBButtons)"; do
     if [[ -d $folder ]]; then bundled+=(--bundled-off "$folder"); break; fi
 done
 game=$("$PYTHON" scripts/mods.py "$game" --out "$out" \

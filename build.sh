@@ -2,14 +2,14 @@
 set -euo pipefail
 cd -- "$(dirname -- "$0")"
 mkdir -p out
-# Windows: MSYS2 CLANG64 (packages in packaging/windows/README.md). The GPU library is static
+# Windows: MSYS2 CLANG64. The GPU library is static
 # there and CMake links bb-probe.exe as well; no PGO (GCC-only flags), LTO off by default.
 case $(uname -s) in
 MINGW*|MSYS*)
     # shellcheck source=msys2-env.sh
     source ./msys2-env.sh
     for tool in clang cmake ninja pkg-config; do
-        command -v "$tool" >/dev/null || { echo "Need $tool from MSYS2 CLANG64 (packaging/windows/README.md)." >&2; exit 1; }
+        command -v "$tool" >/dev/null || { echo "Need $tool from MSYS2 CLANG64." >&2; exit 1; }
     done
     if [[ ! -f gpu/third_party/fsr-vulkan/CMakeLists.txt || ! -f gpu/third_party/imgui/imgui.h ||
           ! -f gpu/third_party/xbyak/xbyak/xbyak.h ]]; then

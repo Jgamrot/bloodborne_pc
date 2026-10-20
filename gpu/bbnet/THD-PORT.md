@@ -7,7 +7,7 @@ online-shadps4-0.20) of droogie/bbhost's network side
 `src/hle/net.cpp`, `src/hle/np_matching2.cpp`, `src/hle/np_signaling.cpp`, the NP parts of
 `src/hle/system.cpp`, and `src/net/{http,account,session,stun}.cpp`, as Supermedo took it into
 Supermedo/bloodborne_pc (3405c4d). These portions are GPL-3.0-or-later
-(`packaging/windows/licenses/GPL-3.0-bbhost-online-code.txt`); copyright remains with the bbhost
+(`licenses/GPL-3.0-bbhost-online-code.txt`); copyright remains with the bbhost
 contributors.
 
 With that pool the game's NP and sceNet imports are these instead of the shadNet ones. sceHttp

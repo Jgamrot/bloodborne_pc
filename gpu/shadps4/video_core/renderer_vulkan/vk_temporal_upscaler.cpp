@@ -750,8 +750,10 @@ void TemporalUpscaler::ExtraSharpen(vk::CommandBuffer cmdbuf, vk::Image target, 
     const auto device = instance.GetDevice();
     if (extra_sharpen_width != w || extra_sharpen_height != h) {
         // Retired command buffers may still read the old copy. `cmdbuf` stays open.
-        scheduler.WaitSubmitted();
-        extra_sharpen_view.reset();
+        if (extra_sharpen_image) {
+            scheduler.DeferOperation([image = std::move(extra_sharpen_image),
+                                      view = std::move(extra_sharpen_view)] {});
+        }
         extra_sharpen_image = VideoCore::UniqueImage(device, instance.GetAllocator());
         extra_sharpen_image.Create(vk::ImageCreateInfo{
             .imageType = vk::ImageType::e2D,
@@ -1072,14 +1074,15 @@ void TemporalUpscaler::Run() {
         CachedView(color, vk::Format::eR16G16B16A16Sfloat, vk::ImageAspectFlagBits::eColor);
 
     scheduler.EndRendering();
-    runtime.Transit(&depth, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
-                    vk::AccessFlagBits2::eShaderRead);
-    runtime.Transit(&color, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
-                    vk::AccessFlagBits2::eShaderRead);
-    runtime.FlushBarriers();
     vk::Image input_color = color.GetImage(), input_depth = depth.GetImage();
     vk::ImageView input_color_view = color_view, input_depth_view = depth_view;
-    if (reduced) {
+    if (!reduced) {
+        runtime.Transit(&depth, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
+                        vk::AccessFlagBits2::eShaderRead);
+        runtime.Transit(&color, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
+                        vk::AccessFlagBits2::eShaderRead);
+        runtime.FlushBarriers();
+    } else {
         VideoCore::ImageViewInfo ci;
         ci.format = color.info.pixel_format;
         const auto c = scene_targets.Read(scene_color, ci);
@@ -1108,19 +1111,20 @@ void TemporalUpscaler::Run() {
         };
         cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier});
     };
-    const auto all = vk::PipelineStageFlagBits2::eAllCommands;
-    const auto rw = vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite;
+    const auto top = vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eTopOfPipe;
     // Previous contents are not needed: the layouts start from undefined every frame.
-    own_barrier(vk::Image(motion_image), vk::ImageLayout::eUndefined, all,
+    own_barrier(vk::Image(motion_image), vk::ImageLayout::eUndefined, top,
                 vk::AccessFlagBits2::eNone, vk::ImageLayout::eGeneral,
                 vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderWrite);
-    own_barrier(vk::Image(output_image), vk::ImageLayout::eUndefined, all,
-                vk::AccessFlagBits2::eNone, vk::ImageLayout::eGeneral, all, rw);
+    own_barrier(vk::Image(output_image), vk::ImageLayout::eUndefined, top,
+                vk::AccessFlagBits2::eNone, vk::ImageLayout::eGeneral,
+                vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderWrite);
 
     camera_motion.RecordMotion(cmdbuf, input_depth_view, *motion_view, w, h);
     own_barrier(vk::Image(motion_image), vk::ImageLayout::eGeneral,
                 vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderWrite,
-                vk::ImageLayout::eGeneral, all, vk::AccessFlagBits2::eShaderRead);
+                vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
+                vk::AccessFlagBits2::eShaderRead);
 
     const bool has_reactive = mask_ready || RecordReactive(input_color_view);
 
@@ -1220,7 +1224,8 @@ void TemporalUpscaler::Run() {
             ExtraSharpen(cmdbuf, vk::Image(output_image), false, ow, oh);
         }
         // The result replaces the scene color's RGB (its alpha carries data for the post).
-        own_barrier(vk::Image(output_image), vk::ImageLayout::eGeneral, all, rw,
+        own_barrier(vk::Image(output_image), vk::ImageLayout::eGeneral,
+                    vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderWrite,
                     vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
                     vk::AccessFlagBits2::eShaderRead);
         runtime.Transit(&color, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
@@ -1806,16 +1811,17 @@ void TemporalUpscaler::RunScaled() {
     const auto color_access = vk::AccessFlagBits2::eColorAttachmentRead |
                               vk::AccessFlagBits2::eColorAttachmentWrite;
     const auto rw = vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite;
+    const auto top = vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eTopOfPipe;
     // The previous frame's display pass read it: all commands before.
     barrier(vk::Image(ui_image), vk::ImageAspectFlagBits::eColor, vk::ImageLayout::eUndefined,
             all, vk::AccessFlagBits2::eNone, vk::ImageLayout::eGeneral, all, rw);
     barrier(vk::Image(motion_image), vk::ImageAspectFlagBits::eColor, vk::ImageLayout::eUndefined,
-            all, vk::AccessFlagBits2::eNone, vk::ImageLayout::eGeneral,
+            top, vk::AccessFlagBits2::eNone, vk::ImageLayout::eGeneral,
             vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderWrite);
     camera_motion.RecordMotion(cmdbuf, depth_view, *motion_view, w, h);
     barrier(vk::Image(motion_image), vk::ImageAspectFlagBits::eColor, vk::ImageLayout::eGeneral,
             vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderWrite,
-            vk::ImageLayout::eGeneral, all, vk::AccessFlagBits2::eShaderRead);
+            vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderRead);
 
     const auto now = std::chrono::steady_clock::now();
     float frame_ms = std::chrono::duration<float, std::milli>(now - last_frame).count();
@@ -1827,8 +1833,9 @@ void TemporalUpscaler::RunScaled() {
     // bbport: FSR 4 writes its HDR-format output, copied into the output-size UI image.
     if (UseFsr4() || UseDlss() || BbSettings::Get().upscaler == BbSettings::UpscalerTaa) {
         barrier(vk::Image(output_image), vk::ImageAspectFlagBits::eColor,
-                vk::ImageLayout::eUndefined, all, vk::AccessFlagBits2::eNone,
-                vk::ImageLayout::eGeneral, all, rw);
+                vk::ImageLayout::eUndefined, top, vk::AccessFlagBits2::eNone,
+                vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
+                vk::AccessFlagBits2::eShaderWrite);
         bool ok4 = true;
         if (BbSettings::Get().upscaler == BbSettings::UpscalerTaa) {
             RecordTaa(cmdbuf, color_view, depth_view);
@@ -1964,8 +1971,9 @@ void TemporalUpscaler::RunScaled() {
         dispatched_last_frame = true;
         ExtraSharpen(cmdbuf, vk::Image(ui_image), true, ow, oh);
     }
-    barrier(vk::Image(ui_image), vk::ImageAspectFlagBits::eColor, vk::ImageLayout::eGeneral, all,
-            rw, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+    barrier(vk::Image(ui_image), vk::ImageAspectFlagBits::eColor, vk::ImageLayout::eGeneral,
+            vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderWrite,
+            vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eColorAttachmentOutput,
             color_access);
 
     done_this_frame = true; // the UI is not jittered

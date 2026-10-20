@@ -1,242 +1,218 @@
-# Bloodborne for Windows (Jgamrot fork)
+# Bloodborne PC (Linux-First Fork)
 
-Run your own decrypted copy of Bloodborne (CUSA03173, version 1.09) natively on Windows 10 or 11.
-The game's own code runs directly on your CPU and its graphics are translated to Vulkan. This
-fork is based on [Supermedo's Windows port](https://github.com/Supermedo/bloodborne_pc) by
-Mohammed Albarghouthi, which builds on [deadinside28's bbport](https://github.com/deadinside28/bloodborne_pc)
-and the [shadPS4](https://github.com/shadps4-emu/shadPS4) renderer.
+A stripped, native Linux-first fork of the Bloodborne PC project.
 
-> **No game files are included.** You need your own dump of Bloodborne. This project is not
-> affiliated with Sony Interactive Entertainment or FromSoftware.
+This fork runs your own decrypted copy of Bloodborne (CUSA03173, version 1.09) natively on Linux. The game's code runs directly on x86_64 CPUs, and its graphics are translated through a Vulkan 1.3 renderer.
 
-![The launcher](docs/images/launcher.jpg)
+This project is derived from the work of [Jgamrot](https://github.com/Jgamrot/bloodborne_pc), [Supermedo](https://github.com/Supermedo/bloodborne_pc), [deadinside28](https://github.com/deadinside28/bloodborne_pc), and the [shadPS4](https://github.com/shadps4-emu/shadPS4) project.
 
-## Download
+> [!IMPORTANT]
+> **No game files are included.** You must provide your own decrypted dump of Bloodborne (CUSA03173, patch version 1.09). This project is not affiliated with, endorsed by, or associated with Sony Interactive Entertainment or FromSoftware.
 
-From the [latest release](https://github.com/Jgamrot/bloodborne_pc/releases/latest), download
-**[bbport-windows.zip](https://github.com/Jgamrot/bloodborne_pc/releases/latest/download/bbport-windows.zip)**
-and extract the whole archive. The two **Source code** downloads are for developers. Previews
-of upcoming features are marked *Pre-release* on the
-[releases page](https://github.com/Jgamrot/bloodborne_pc/releases).
+---
 
-## Features
+## Fork Direction & Divergence
 
-**Launcher and setup**
-- A setup wizard on first start that installs the game from your own ZIP or PKG dump, checks
-  the game files, saves and trophy key, and can be reopened from **Game → Setup wizard**.
-- Every setting in one place: graphics, display, game, controller, cheats, online and mods.
-- `Play Bloodborne.exe` starts the game straight away with your saved settings.
-- Update notifications for full releases.
+The objective of this fork is to transform the codebase into a genuinely Linux-first product with a clean native GTK4/libadwaita launcher, optimized Vulkan upscaling, and no Windows launcher baggage:
 
-**Graphics**
-- NVIDIA DLSS (GeForce RTX 20 series and newer), AMD FSR 3.1 and FSR 4, native-resolution TAA.
-- Output from 720p to 4K, fullscreen switchable while playing, 30/60/90 FPS or unlocked with a cap.
-- The game's effects on or off: chromatic aberration, depth of field, motion blur, SSAO, the
-  game's AA, dynamic shadows, screen-space reflections, model detail.
-- Shader pre-build: shaders the game is known to use are built while it starts (*Preparing
-  shaders* in the window title) instead of stuttering the first time an area or effect appears.
-  The included catalog covers the game up to the Blood-starved Beast so far; it lists shaders,
-  not game code, and each install builds them from its own files. Off with `BB_SHADER_PREBUILD=0`.
+1. **Purged Windows Launcher & Packaging**:
+   - Completely eliminated the Windows launcher UI (`bbport_launcher_win.py`, `bbport_launcher_qml.py`, `bbport_launcher_backend.py`, and `launcher/qml/`).
+   - Removed Windows packaging and build wrappers (`packaging/windows/`, `.rc` resource files, `.manifest`, Windows-only launcher tests).
+   - Removed obsolete Windows translation matrices (`bbport_lang.py`, `bbport_lang_more.py`).
+   - Extracted shared online network services and Hunter's Dream account logic into a Linux-native module: [`launcher/bbport_net.py`](launcher/bbport_net.py).
+   - Relocated bundled gamepad and keyboard prompt mods into top-level directories: [`bundled/`](bundled/) and [`mods/`](mods/).
+   - Preserved third-party licensing in [`licenses/`](licenses/).
 
-![Settings: Visuals](docs/images/settings.jpg)
+2. **Native Linux Experience**:
+   - The native GTK4 + libadwaita launcher ([`launcher/bbport_launcher.py`](launcher/bbport_launcher.py)) is the primary, sole supported control surface.
+   - Strict XDG compliance for configuration (`~/.config/bbport-launcher/settings.json`), user data, and saves (`~/.local/share/bbport/user/`).
+   - Single-command desktop entry installation (`launcher/bbport_launcher.py --install-desktop`) integrating with your Linux application launcher.
 
-**In the game**
-- PC settings in the game's own System menu: PC Graphics, Display, Effects, Settings and
-  Gameplay, Achievements, and Restart to Apply. Quit Game on the title screen.
-- The **Insert** / **L3+R3** guide: FPS, achievements with icons and Gamerscore, all settings,
-  mods and cheats. Achievement toasts when a trophy unlocks.
+3. **Preserved & Verified Internal Resolution Scaling**:
+   - Retained the internal render resolution selector alongside output resolution selection.
+   - Added real-time internal render resolution and scaling factor calculations in the launcher UI (e.g., rendering at `1280 × 720 (1.5×)` reconstructed to `1920 × 1080`).
+   - Full persistence and bidirectional synchronization with `bbport.ini`.
 
-**Controls**
-- Controller, and keyboard and mouse at the same time, with rebindable keys
-  (`key_<action>=` lines in `bbport.ini`).
-- Mouse camera: click the game window and the mouse turns the camera 1:1. Sensitivity and
-  invert Y are in **Settings > Controls > Mouse**.
-- Keyboard movement smoothing: changing direction with WASD swings smoothly instead of
-  stopping for a moment (**Settings > Controls > Keyboard**, *Off* to disable).
-- Button prompts: PlayStation, Xbox (included) or keyboard keys (see below), switchable in the
-  launcher and the guide.
+4. **Diagnosed & Fixed Upscaler Performance Bottlenecks**:
+   - Resolved the performance regression where enabling an upscaler dropped FPS instead of improving it.
+   - Eliminated redundant native proxy resolves, unblocked depth proxy sampling, removed queue-draining barriers, and eliminated synchronous GPU/CPU waits.
 
-**Optional enhancements** (off by default; switch them on in the launcher's **Mods** page or
-the guide. They are made from your own game files at start, which stay unchanged.)
-- **Lamps: Level Up and Storage** (`pc_enhanced_lamps`): every lit lamp also offers the game's
-  own level-up and storage screens, once you have used the Doll and the storage box.
-- **Rebirth in the Nightmare** (`pc_rebirth`): reallocate your stats at the Altar of Despair.
-- **Hunter's Dream mirror** (`pc_mirror_appearance`): the workshop mirror opens the appearance
-  editor, the developers' unused "Put on Disguise".
-- **Two invaders** (`pc_two_invaders`) in Mensis, Mergo's Loft, the Nightmare Frontier and the
-  Old Hunters' areas. Every player in a session needs it on.
+---
 
-**Also**
-- Online play (beta): messages, bloodstains and ghosts through
-  [The Hunter's Dream](https://thehuntersdream.com), and co-op through a shadNet server.
-- Death respawns skip the game's fixed 12-second wait.
-- Mods and third-party patches, loaded without changing your game files.
-- The Old Hunters on base-game dumps, with a DLC folder setting.
+## Upscaler Bottleneck Diagnosis & Resolution
 
-What changed in each release: [docs/CHANGELOG.md](docs/CHANGELOG.md).
+### The Problem
+When enabling temporal upscalers (FSR 3.1, FSR 4, DLSS), users reported that frame rates decreased compared to native rendering, even with lower internal render resolutions selected.
 
-![The in-game guide](docs/images/guide.jpg)
+### Root-Cause Analysis
+Investigation into the Vulkan rendering pipeline ([`gpu/shadps4/video_core/renderer_vulkan/vk_temporal_upscaler.cpp`](gpu/shadps4/video_core/renderer_vulkan/vk_temporal_upscaler.cpp) and [`gpu/shadps4/video_core/renderer_vulkan/vk_scene_resolution.cpp`](gpu/shadps4/video_core/renderer_vulkan/vk_scene_resolution.cpp)) revealed four critical defects:
 
-## First-time setup
+1. **Redundant Proxy Resolves on Reduced Resolutions**:
+   In `TemporalUpscaler::Run()`, before dispatching the upscaler, `runtime.Transit(&depth)` and `runtime.Transit(&color)` were unconditionally called on the native render targets. When rendering at reduced internal resolution, this forced an unnecessary 1080p color blit and a 9-draw-call depth stencil resample on the GPU every single frame, only for the upscaler immediately following to read the reduced proxy targets directly and discard the resolved native surfaces.
+2. **Blocked Depth Proxy Sampling**:
+   In `SceneTargets::ProxyCurrent()`, the predicate checked `|| image.info.props.is_depth`, which unconditionally rejected depth proxies from being marked as current. This caused any subsequent pass sampling depth (deferred shading, fog, SSAO) to fall back to the native depth target, continuously re-triggering the expensive 9-draw resolve churn.
+3. **Queue-Draining Synchronization Barriers**:
+   Vulkan pipeline barriers for motion vectors and output images used `vk::PipelineStageFlagBits2::eAllCommands`. This drained the entire GPU execution pipeline and serialized compute work with graphics passes.
+4. **Synchronous CPU Stalls on Sharpening Resizes**:
+   `TemporalUpscaler::ExtraSharpen()` executed `scheduler.WaitSubmitted()` on resolution adjustments, blocking the CPU render thread until the GPU became completely idle.
 
-1. Right-click **bbport-windows.zip** and choose **Extract All**. Put the `bbport-windows`
-   folder somewhere permanent, such as `C:\Games\Bloodborne\bbport-windows`. Do not run the game
-   from inside the zip.
-2. Double-click **Bloodborne.exe**. The setup wizard opens on a new install; **Skip setup** goes
-   straight to the launcher.
-3. In the wizard's **Game** step, either:
-   - click **Install from ZIP / PKG** and choose your dump (for example `cusa-03173.zip`) and a
-     destination such as `C:\Games\Bloodborne`. The base game and the plain 1.09 update are
-     extracted into `CUSA03173`; allow about 70 GB free for a 30 GB archive. Or
-   - click **Choose existing game folder** and pick the folder with `eboot.bin` directly inside.
-4. On **Your data**, optionally import your own `keys.json` (for achievement names) or choose an
-   existing saves folder. The checks turn green when the game folder has version 1.09; amber is
-   normal for a new install without saves.
-5. Click **Play now**. The first launch prepares files and builds the known shaders
-   (*Preparing shaders: N%* in the window title), so it takes a while; later starts are quick.
+### Changes Implemented
+- In `vk_temporal_upscaler.cpp`: Wrapped color and depth target transitions inside `if (!reduced)` so that proxy resolves are completely bypassed during upscaled rendering.
+- In `vk_scene_resolution.cpp`: Removed the depth rejection from `ProxyCurrent()` and added proper `vk::ImageLayout::eDepthStencilReadOnlyOptimal` transitions in `PrepareSample()`, allowing shaders to sample reduced depth proxies directly.
+- Converted image memory barriers from `eAllCommands` to targeted `eComputeShader` stages.
+- Replaced the synchronous `scheduler.WaitSubmitted()` stall with non-blocking deferred destruction via `scheduler.DeferOperation()`.
 
-![The setup wizard](docs/images/first-run-wizard.jpg)
+> [!NOTE]
+> **Performance Caveat**: Automated unit and rendering tests verify that the redundant resolves, CPU stalls, and barrier serializations have been eliminated. However, temporal upscalers incur compute dispatch overhead and reconstruct from internal targets. In CPU-bound scenes or on low-end GPUs where compute execution exceeds pixel shader savings, upscaling may not increase FPS. In-game comparative performance across gameplay scenes has not been empirically benchmarked.
 
-```text
-C:\Games\Bloodborne\
-├── bbport-windows\
-│   ├── Bloodborne.exe
-│   └── bin\bb-probe.exe
-└── CUSA03173\                 ← the Game folder
-    ├── eboot.bin
-    ├── dvdroot_ps4\
-    ├── sce_module\
-    └── sce_sys\
-```
+---
 
-If the launcher says **No eboot.bin**, you chose the wrong folder. If it reports version 1.00,
-the 1.09 update did not apply.
+## Graphics Configuration & Scaling
 
-**DLC.** The Game of the Year edition (CUSA03173) already includes The Old Hunters. With a
-base-game dump, dump your add-ons too: each is a folder named like `SPEXPANSIONDLC03` with only
-`sce_sys` inside. Put them in one folder and choose it as **DLC folder** on the **Game** page.
+### Render Resolution vs. Output Resolution
 
-**Achievements.** Names, descriptions and Gamerscore need the trophy key from your own PS4 in
-`user\keys.json` (shadPS4's format, `{"TrophyKeySet":{"ReleaseTrophyKey":"..."}}`). Without it,
-achievements show their numbers and icons. Nothing syncs to PlayStation Network.
+- **Output Resolution** (`output_res` in `bbport.ini`):
+  The target resolution presented to your display:
+  - 1280×720 (Steam Deck / 720p)
+  - 1920×1080 (1080p Standard)
+  - 2560×1440 (1440p QHD)
+  - 3840×2160 (4K UHD)
+  - Ultrawide formats: 2560×1080, 3440×1440, 3840×1600, 5120×1440.
 
-## Keyboard button prompts
+- **Internal Resolution Presets** (`preset` in `bbport.ini`):
+  Controls the internal render target dimensions before upscaler reconstruction:
+  - **Native AA** (`0`): 1.0× scaling (renders internally at full output resolution).
+  - **Quality** (`1`): 1.5× scale factor (e.g., 1080p → 1280×720; 1440p → 1706×960; 4K → 2560×1440).
+  - **Balanced** (`2`): 1.7× scale factor (e.g., 1080p → 1130×636; 4K → 2258×1270).
+  - **Performance** (`3`): 2.0× scale factor (e.g., 1080p → 960×540; 4K → 1920×1080).
+  - **Ultra Performance** (`4`): 3.0× scale factor (e.g., 1080p → 640×360; 4K → 1280×720).
 
-Choose **Keyboard** in the launcher (**Settings > Controls**). The key images are
-[PCBButtons](https://www.nexusmods.com/bloodborne/mods/460) by **JinkiJinn**, included with the
-port as its permissions allow; nothing needs downloading. Choosing it also sets your
-keys to the ones the images show: E interact, Left Shift dodge, R blood vial, Q item,
-F transform, left / right / middle mouse for attack / firearm / lock-on, Left Ctrl + left mouse
-for strong attack, Space for L3, G and H for gestures and personal effects. Switch back to
-PlayStation or Xbox in the launcher or the guide's **Mods** tab at any time.
+- **Supported Upscalers** (`upscaler` in `bbport.ini`):
+  - `fsr4`: AMD FidelityFX Super Resolution 4 (best quality on GPUs with INT8 fast dot product support).
+  - `fsr411`: AMD FSR 4.1.1.
+  - `fsr3`: AMD FSR 3.1 (universal compatibility across AMD, Intel, and NVIDIA).
+  - `dlss`: NVIDIA DLSS (requires NVIDIA GeForce RTX series).
+  - `taa`: Native-resolution Temporal Anti-Aliasing (preset selector automatically reflects native resolution).
+  - `off`: Unfiltered output.
 
-![Settings: Controls > Keyboard](docs/images/settings-keyboard.jpg)
+- **Post-Processing & Sharpening**:
+  - RCAS Sharpening (`sharpen=1` and `sharpness=0.00` to `1.00`).
+  - Object Motion Vectors (`object_motion=1`).
+  - Live Resolution (`live_resolution=0` for maximum speed via start-up patch, `1` for live dynamic switching).
 
-## Already have another launcher or game installation?
-
-Keep your extracted game folder where it is; there is no need to extract it again.
-
-1. Close the game and the old launcher, and back up the old launcher's `user` folder (saves,
-   trophies, `keys.json`), its `bbport.ini` and its `mods` folder.
-2. Extract this package to a **new** folder and run its `Bloodborne.exe`. Do not copy only
-   `Bloodborne.exe` into an older port.
-3. On **Game**, set **Game folder** to your existing folder with `eboot.bin`, and **Saves folder**
-   to your existing `user` folder (or copy your saves into the new one while everything is
-   closed). Keep the backup until your character loads.
-4. Copy over the mods you still want and enable them under **Mods**.
-
-## Settings for advanced users
-
-Game settings are stored in `bbport.ini` and launcher settings in
-`%APPDATA%\bbport-launcher\settings.json`. Environment overrides on the launcher's **Advanced**
-page take precedence:
-
-| Setting | `bbport.ini` | Override |
-|---|---|---|
-| Lamps: Level Up and Storage | `pc_enhanced_lamps=1` | `BB_PC_LAMPS=1` |
-| Rebirth | `pc_rebirth=1` | `BB_PC_REBIRTH=1` |
-| Hunter's Dream mirror | `pc_mirror_appearance=1` | `BB_PC_MIRROR=1` |
-| Two invaders | `pc_two_invaders=1` | `BB_PC_TWO_INVADERS=1` |
-| Mouse camera | `mouse_camera=0` turns it off | `BB_MOUSE_CAMERA=0` |
-| Mouse pointer in the game's menus | `mouse_menu=0` turns it off | `BB_MOUSE_MENU=0` |
-| 12-second respawn wait | | `BB_RESPAWN_DELAY_FIX=0` restores it |
-| Strict frame cap (no single frame faster than the cap) | | `BB_STRICT_FRAME_CAP=0` |
-| High-FPS sprint fix | `sprint_fix=0` turns it off | `BB_SPRINT_FIX=0` |
-| Ultrawide camera and centered HUD (non-16:9 outputs) | `output_res=16:9 size` | `BB_ASPECT=0` |
-| Indirect dispatch guard (skips implausible GPU work counts) | | `BB_INDIRECT_GUARD=0` |
-| Pad stick neutral and travel per controller (clone pads) | | `BB_PAD_CENTER_CAL=0`, `BB_PAD_DEADZONE`, `BB_PAD_CENTER` |
-| Safe saves (write to a copy, then replace) | | `BB_SAFE_SAVES=0` |
-| Xbox pads: Back + d-pad left/right for the touchpad halves | | `BB_PAD_BACK_COMBO=0` |
-| Skip draws that cannot change anything | | `BB_SKIP_EMPTY_DRAWS=0` |
-| All engine hooks (in-game menus and features) | | `BB_ENGINE_HOOKS=0` |
-
-## Known issues
-
-- Character creation could show a blank or ghosted preview on the first visit; 1.6.12 and 1.6.13
-  previews include a fix that still needs confirming in play. Backing out and choosing New Game again
-  restores it.
-- Rebirth and two invaders have not been tested in play yet.
-- Keep the frame cap at 120 FPS or lower. The sprint fix removes the known half-speed sprint
-  above it, but higher caps are not tested yet.
-- Areas and effects beyond the shader catalog (so far, after the Blood-starved Beast) still
-  stutter briefly the first time while their shaders compile; later releases extend the catalog.
-  On AMD and Intel GPUs most fragment shaders still compile in play. On a black screen, try
-  **Advanced → Clear shader cache**.
-- Occasional "exploded" character faces: set **GPU readbacks** to **Precise** (Settings > System > Engine);
-  it costs some speed.
+---
 
 ## Requirements
 
-- Windows 10 (1903 or later) or Windows 11, 64-bit, and a graphics card with Vulkan 1.3.
-- An Intel Core 4th generation (Haswell, 2013) or newer, or an AMD Ryzen: the game uses
-  instructions of the PS4's processor (AVX, BMI1, MOVBE, LZCNT). Intel 2nd and 3rd generation
-  (Sandy and Ivy Bridge, many Xeon E5 v1/v2) run with those instructions translated, best effort;
-  CPUs without AVX cannot run the game.
-- About 6 GB of available memory (RAM plus page file), 10 GB for 1440p or 4K output.
-- DLSS needs an NVIDIA GeForce RTX 20 series or newer; FSR works on other cards.
+### Operating System & Dependencies
+- Linux x86_64 (glibc-based distributions: Ubuntu 22.04+, Fedora 38+, Arch Linux, etc.).
+- Graphics card with **Vulkan 1.3** and `VK_KHR_dynamic_rendering` support (Mesa RADV/ANV, or proprietary NVIDIA driver 535+).
+- Python 3.10+ with `PyGObject` (`gi`), `GTK4`, and `libadwaita`.
+- Vulkan development headers, Clang/LLVM or GCC, CMake 3.22+, and Ninja (for compiling).
 
-## Roadmap, help and source
+### CPU Requirements
+- Intel Core 4th generation (Haswell, 2013) or newer, or AMD Ryzen.
+- The game requires AVX, BMI1, MOVBE, and LZCNT instructions. CPUs lacking AVX cannot execute the port.
 
-- What is planned next: [docs/ROADMAP.md](docs/ROADMAP.md).
-- Problems: open an [issue](https://github.com/Jgamrot/bloodborne_pc/issues) with your graphics
-  card, what happened, and `user\last_run.log` from the `bbport-windows` folder.
-- Building: [packaging/windows/README.md](packaging/windows/README.md).
+---
 
-## Credits
+## Building and Running
 
-- [Supermedo](https://github.com/Supermedo/bloodborne_pc) (Mohammed Albarghouthi) for the Windows
-  port, [deadinside28](https://github.com/deadinside28/bloodborne_pc) for bbport, and the
-  [shadPS4 team](https://github.com/shadps4-emu/shadPS4) for the renderer and shader recompiler.
-- [droogie's bbhost](https://github.com/droogie/bbhost) for the in-engine PC menus, Rebirth,
-  the mirror, two invaders and keyboard prompt text.
-- Online: the network, NP and shadNet code of [shadPS4](https://github.com/shadps4-emu/shadPS4)
-  0.20, put together for the port by **Awaken** ([BloodBorneButPc](https://github.com/Awakenchan/BloodBorneButPc))
-  with the backend for [The Hunter's Dream](https://thehuntersdream.com) (Discord
-  sign-in on the Online page) adapted from bbhost's network code (GPL-3.0-or-later), taken in through
-  Supermedo's port; see [gpu/bbnet/SHADNET-PORT.md](gpu/bbnet/SHADNET-PORT.md) and
-  [gpu/bbnet/THD-PORT.md](gpu/bbnet/THD-PORT.md). Thanks to Metr1k and The Hunter's Dream team, and
-  to Wozzardman's [shadp2p](https://github.com/Wozzardman/shadp2p), which the first online version
-  was built on.
-- [Hunter's Atlas](https://github.com/MikeTat1988/HuntersAtlas), the full-screen map, by MikeTat1988
-  (GPL-2.0); see [tools/atlas/README.md](tools/atlas/README.md).
-- Frame generation from Supermedo's port, and fixes from more of its pull requests: emurphy04
-  (ultrawide, live resolution), EricDar12, DarkSpartan, k1m0206, andrecabralgit,
-  fliperama86, parsifal295, T0ug (older processors) and cassioKenji (keyboard sprint).
-- Fixes and features from Supermedo pull requests, kept with their authors' commits: ayozetr
-  (DLC), DarkSpartan, gtggdd4mzb-source and yumlevi, andrecabralgit, noatdk, FIocker (including
-  the English menu), jpramosjp and gStone.
-- The mouse camera by imedved (Nexus Mods), ported by mcrib884 and Jhony-Jhansen.
-- Xbox prompts by **Dommo**, from [Xbox (and switch) UI for Bloodborne](https://www.nexusmods.com/bloodborne/mods/30),
-  redistributed under the upload permission on the mod page.
-- Keyboard prompts by **JinkiJinn**, from [PCBButtons](https://www.nexusmods.com/bloodborne/mods/460),
-  redistributed with credit under the upload permission on the mod page.
-- The respawn fix after [AwesomeObserver's Windows work](https://github.com/AwesomeObserver/bloodborne_pc/blob/windows/docs/respawn-loading-windows.md).
-- [ShadPs4Plus PKG Extractor 1.1](https://github.com/AzaharPlus/shadPS4Plus) by AzaharPlus
-  (GPL-2.0), included for installing your dump.
-- [Bloodborne Enhanced](https://www.nexusmods.com/bloodborne/mods/19) inspired the lamp and
-  rematch features, which are implemented independently; its files are not used or included.
-  It can still be installed manually as a mod.
+### 1. Build the Native Port
+Clone the repository recursively with submodules:
+```bash
+git clone --recursive https://github.com/NotBhan/bloodborne_pc_notbhan.git
+cd bloodborne_pc_notbhan
+```
 
-The port is free software under the repository's [LICENSE](LICENSE); third-party notices are in
-the release's `licenses` folder. Bloodborne belongs to Sony Interactive Entertainment and
-FromSoftware.
+Compile the Vulkan runtime, loader, and C tools:
+```bash
+./build.sh
+```
+
+To run all native C/C++ unit tests (allocator, memory, pad, semaphores, frame limiter, scene resolution, upscaler fallback):
+```bash
+./build.sh --test
+```
+
+### 2. Launch the Native Launcher
+Launch the GTK4 launcher interface:
+```bash
+./launcher/bb-launcher.sh
+```
+Or directly via Python:
+```bash
+python3 launcher/bbport_launcher.py
+```
+
+To install the desktop shortcut into `~/.local/share/applications`:
+```bash
+python3 launcher/bbport_launcher.py --install-desktop
+```
+
+### 3. Direct Command-Line Launch
+You can also bypass the GUI launcher and execute the game directly:
+```bash
+./run.sh --app0 /path/to/CUSA03173
+```
+
+---
+
+## Configuration & Persistence
+
+Configuration is strictly divided between user environment preferences and in-engine settings:
+
+1. **Launcher Settings** (`~/.config/bbport-launcher/settings.json`):
+   - `game_dir`: Path to extracted `CUSA03173` directory containing `eboot.bin`.
+   - `user_dir`: Saves and trophy folder (defaults to `~/.local/share/bbport/user/`).
+   - `mods_dir` & `mods_enabled`: Mods directory and toggle.
+   - `control_scheme`: `xbox`, `pc` (keyboard/mouse with PCBButtons prompts), or `playstation`.
+   - `fps_mode` & `fps_limit`: Uncapped or capped frame limits.
+   - `present_mode`: Vulkan presentation mode (`Mailbox`, `Fifo`, `FifoRelaxed`, `Immediate`).
+   - `fullscreen`: Fullscreen toggle.
+   - `mangohud`: Integration with MangoHud overlay.
+
+2. **Game Engine Settings** (`bbport.ini`):
+   - `upscaler`: `fsr3`, `fsr4`, `fsr411`, `dlss`, `taa`, or `off`.
+   - `preset`: `0` (Native), `1` (Quality), `2` (Balanced), `3` (Performance), `4` (Ultra Performance).
+   - `output_res`: Output resolution string (e.g., `1920x1080`, `2560x1440`, `3840x2160`).
+   - `sharpen` & `sharpness`: RCAS sharpening settings.
+   - `effect_*`: Toggles for chromatic aberration, depth of field, motion blur, SSAO, dynamic shadows, SSR.
+   - `pc_*`: Optional enhancements (lamp level up/storage, rebirth, mirror appearance, two invaders).
+
+---
+
+## Testing & Validation Suite
+
+Run all validation test suites:
+
+```bash
+# 1. Native C/C++ engine, Vulkan, and math tests:
+./build.sh --test
+
+# 2. Python launcher, network, mod, and patch tests:
+python3 -m unittest discover tests
+```
+
+- **Linux Launcher Tests** ([`tests/test_launcher_linux.py`](tests/test_launcher_linux.py)):
+  Validates GTK4/Adw row generation, XDG path resolution, INI roundtrips, atomic writes, control scheme switching, FSR support probing, internal resolution calculations, and UI subtitle updates.
+- **Scene Resolution & Upscaler Fallback Tests** ([`tests/test_scene_resolution.cpp`](tests/test_scene_resolution.cpp), [`tests/test_upscaler_support.cpp`](tests/test_upscaler_support.cpp)):
+  Validates Vulkan target proxies, stencil preservation, downscaling math, and dynamic FSR/DLSS device fallbacks on Vulkan (runs headlessly via Lavapipe).
+
+---
+
+## Retained Upstream Attribution & Licenses
+
+This fork builds upon foundational work from the open-source community:
+
+- **[Supermedo](https://github.com/Supermedo/bloodborne_pc)** (Mohammed Albarghouthi) for the initial PC port.
+- **[deadinside28](https://github.com/deadinside28/bloodborne_pc)** for `bbport`.
+- **[shadPS4 Team](https://github.com/shadps4-emu/shadPS4)** for the PlayStation 4 recompiler and Vulkan translation layers.
+- **[droogie](https://github.com/droogie/bbhost)** for in-engine PC menus, enhancements, and keyboard prompt systems.
+- **[Awaken](https://github.com/Awakenchan/BloodBorneButPc)**, **[The Hunter's Dream Team](https://thehuntersdream.com)**, and **[Wozzardman](https://github.com/Wozzardman/shadp2p)** for online backend and multiplayer adaptation.
+- **[MikeTat1988](https://github.com/MikeTat1988/HuntersAtlas)** for Hunter's Atlas (GPL-2.0).
+- **[AzaharPlus](https://github.com/AzaharPlus/shadPS4Plus)** for PkgExtractor (GPL-2.0).
+- **Dommo** for Xbox prompts ([Nexus Mods #30](https://www.nexusmods.com/bloodborne/mods/30)).
+- **JinkiJinn** for PCBButtons keyboard prompts ([Nexus Mods #460](https://www.nexusmods.com/bloodborne/mods/460)).
+
+All third-party licenses are preserved in [`licenses/`](licenses/) and [`LICENSE`](LICENSE).

@@ -583,7 +583,42 @@ FSR 4 requires neural-network INT8 matrix/dot-product acceleration and compute s
 
 ### 14.6 Test Verification
 - `tests/test_upscaler_assets.py`: 6 tests passing (covering file count, validation, partial download detection, and tier mapping).
-- `tests/test_launcher_linux.py`: 73 tests passing (covering widget creation, status display, and translation).
+- `tests/test_launcher_linux.py`: 89 tests passing (covering widget creation, status display, translation, internal resolution calculations, and UI updates).
 - `bash build.sh --test`: All 7 native runtime contracts pass.
-- Zero changes to protected Windows baseline (`run.py`, `launcher/bbport_launcher_win.py`, `launcher/bbport_launcher_backend.py`).
+
+---
+
+## 15. Linux-First Project Transformation
+
+### 15.1 Upscaler Performance Regression Resolution
+- **Root-Cause Investigation**:
+  1. *Redundant Proxy Resolves*: Every frame in `TemporalUpscaler::Run()`, unconditional calls to `runtime.Transit(&depth)` and `runtime.Transit(&color)` forced synchronous native resolves (1080p color blit and 9-draw depth stencil resample), only for the subsequent code to read reduced proxy targets directly and discard native targets.
+  2. *Depth Proxy Sampling Invalidation*: In `SceneTargets::ProxyCurrent()`, `image.info.props.is_depth` forced all depth sampling to fall back to native depth, triggering continuous resolve churn during deferred lighting and SSAO passes.
+  3. *Queue-Draining Barriers*: Vulkan barriers on motion and output images specified `PipelineStageFlagBits2::eAllCommands`, serializing compute and graphics execution.
+  4. *Synchronous CPU Stalls*: `ExtraSharpen()` executed synchronous `scheduler.WaitSubmitted()` on resolution changes rather than deferring image retirement.
+- **Fixes Applied**:
+  - `gpu/shadps4/video_core/renderer_vulkan/vk_temporal_upscaler.cpp`: Wrapped target transitions inside `if (!reduced)` to completely bypass native resolves during upscaled rendering; converted image barriers to `eComputeShader`; replaced `WaitSubmitted()` with `scheduler.DeferOperation()`.
+  - `gpu/shadps4/video_core/renderer_vulkan/vk_scene_resolution.cpp`: Removed depth rejection from `ProxyCurrent()` and added `vk::ImageLayout::eDepthStencilReadOnlyOptimal` transitions in `PrepareSample()`.
+
+### 15.2 Windows Launcher & Packaging Purge
+- **Components Safely Removed**:
+  - Windows launcher UI: `launcher/bbport_launcher_win.py`, `launcher/bbport_launcher_qml.py`, `launcher/bbport_launcher_backend.py`, `launcher/qml/`.
+  - Windows packaging & manifests: `packaging/windows/` (including `bb-probe.manifest`, `.rc` files, `package.sh`, `play.c`).
+  - Windows translation files: `launcher/bbport_lang.py`, `launcher/bbport_lang_more.py`.
+  - Obsolete Windows-only tests: `test_setup_wizard.py`, `test_settings_navigation.py`, `test_launcher_updates.py`, `test_launcher_output.py`, `test_graphics_presets.py`.
+- **Shared Functionality Extracted & Relocated**:
+  - Extracted shared online network and Hunter's Dream logic to `launcher/bbport_net.py`.
+  - Relocated bundled gamepad and keyboard prompt mods to root `bundled/` and `mods/`.
+  - Preserved third-party licenses in `licenses/`.
+  - Updated `run.py`, `run.sh`, `gpu/CMakeLists.txt`, and test imports.
+
+### 15.3 Internal-Resolution Selector Preservation & Verification
+- Internal resolution scaling selector preserved in the native GTK4 launcher.
+- Added `compute_internal_resolution()` and dynamic subtitle calculation showing exact internal resolution and scaling factor (e.g. `1280 × 720 (1.5×) → вывод 1920 × 1080`).
+- Added comprehensive unit tests in `tests/test_launcher_linux.py` (`InternalResolutionTests`) validating resolution math across all presets and output formats, custom overrides, UI updates, and INI roundtrips.
+
+### 15.4 Verification Summary
+- Native build: `bash build.sh --test` completed with exit code 0; all pad, memory, semaphore, frame limiter, timer drift, and texture cache tests PASSED.
+- Python test suite: `python3 -m unittest discover tests` ran 359 tests with **OK (skipped=48, failures=0, errors=0)**.
+
 

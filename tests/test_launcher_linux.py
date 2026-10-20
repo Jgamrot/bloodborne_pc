@@ -1201,6 +1201,89 @@ class ControlSchemeTests(unittest.TestCase):
         self.assertIn(win.current_control_scheme(), ("pc", "xbox", "playstation"))
 
 
+class InternalResolutionTests(unittest.TestCase):
+    def test_preset_scaling_calculations(self):
+        # 1920x1080 calculations
+        # Preset 0: 1.0x -> 1920x1080
+        rw, rh, scale = launcher.compute_internal_resolution("1920x1080", 0)
+        self.assertEqual((rw, rh, scale), (1920, 1080, 1.0))
+        # Preset 1: 1.5x -> 1280x720
+        rw, rh, scale = launcher.compute_internal_resolution("1920x1080", 1)
+        self.assertEqual((rw, rh, scale), (1280, 720, 1.5))
+        # Preset 2: 1.7x -> 1130x636 (aligned to even pixels)
+        rw, rh, scale = launcher.compute_internal_resolution("1920x1080", 2)
+        self.assertEqual(scale, 1.7)
+        self.assertEqual(rw % 2, 0)
+        self.assertEqual(rh % 2, 0)
+        self.assertEqual((rw, rh), (1130, 636))
+        # Preset 3: 2.0x -> 960x540
+        rw, rh, scale = launcher.compute_internal_resolution("1920x1080", 3)
+        self.assertEqual((rw, rh, scale), (960, 540, 2.0))
+        # Preset 4: 3.0x -> 640x360
+        rw, rh, scale = launcher.compute_internal_resolution("1920x1080", 4)
+        self.assertEqual((rw, rh, scale), (640, 360, 3.0))
+
+    def test_different_output_resolutions(self):
+        # 4K (3840x2160) at Performance (2.0x) -> 1920x1080
+        rw, rh, scale = launcher.compute_internal_resolution("3840x2160", 3)
+        self.assertEqual((rw, rh, scale), (1920, 1080, 2.0))
+        # 1440p (2560x1440) at Quality (1.5x) -> 1706x960
+        rw, rh, scale = launcher.compute_internal_resolution("2560x1440", 1)
+        self.assertEqual((rw, rh, scale), (1706, 960, 1.5))
+        # Ultrawide (3440x1440) at Performance (2.0x) -> 1720x720
+        rw, rh, scale = launcher.compute_internal_resolution("3440x1440", 3)
+        self.assertEqual((rw, rh, scale), (1720, 720, 2.0))
+
+    def test_custom_render_res_override(self):
+        rw, rh, scale = launcher.compute_internal_resolution("1920x1080", 3, custom_render_res="1600x900")
+        self.assertEqual((rw, rh, scale), (1600, 900, None))
+
+    def test_invalid_strings_fallback(self):
+        rw, rh, scale = launcher.compute_internal_resolution("invalid_output", "invalid_preset")
+        self.assertEqual((rw, rh), (1130, 636))
+        self.assertEqual(scale, 1.7)
+
+    def test_window_preset_subtitle_updates(self):
+        app = launcher.Adw.Application(application_id="io.github.bbport.TestRes")
+        app.connect("activate", lambda a: None)
+        win = launcher.LauncherWindow(app)
+
+        # FSR 3 + 1920x1080 + Quality (1.5x)
+        win.upscaler_row.set_selected(2)
+        win.output_row.set_selected(1)
+        win.preset_row.set_selected(1)
+        win.update_upscaler_status()
+        subtitle = win.preset_row.get_subtitle()
+        self.assertIn("1280", subtitle)
+        self.assertIn("720", subtitle)
+        self.assertIn("1920", subtitle)
+        self.assertIn("1080", subtitle)
+
+        # TAA shows native resolution
+        win.upscaler_row.set_selected(4)
+        win.update_upscaler_status()
+        taa_sub = win.preset_row.get_subtitle()
+        self.assertIn("1920", taa_sub)
+        self.assertIn("1080", taa_sub)
+        self.assertNotIn("→", taa_sub)
+
+    def test_preset_persistence_in_ini(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ini_file = Path(tmp) / "bbport.ini"
+            with patch.object(launcher, "ini_path", lambda: ini_file):
+                values, lines = launcher.load_ini()
+                values["preset"] = "3"
+                values["output_res"] = "2560x1440"
+                values["upscaler"] = "fsr3"
+                launcher.save_ini(values, lines)
+
+                loaded_values, _ = launcher.load_ini()
+                self.assertEqual(loaded_values["preset"], "3")
+                self.assertEqual(loaded_values["output_res"], "2560x1440")
+                self.assertEqual(loaded_values["upscaler"], "fsr3")
+
+
 if __name__ == "__main__":
     unittest.main()
+
 

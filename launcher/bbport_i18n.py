@@ -132,6 +132,11 @@ EN = {
         "DLSS only works on NVIDIA GeForce RTX GPUs",
     "Некорректное разрешение вывода": "Invalid output resolution",
     "Нет или повреждён файл {}": "Missing or damaged file {}",
+    "Нативное разрешение: {} × {}": "Native resolution: {} × {}",
+    "Внутреннее разрешение: {} × {} ({:.1f}×) → вывод {} × {}":
+        "Internal resolution: {} × {} ({:.1f}×) → output {} × {}",
+    "Внутреннее разрешение: {} × {} (ручной ввод) → вывод {} × {}":
+        "Internal resolution: {} × {} (custom) → output {} × {}",
     # Effects
     "Эффекты игры": "Game effects",
     "Патчи игры, применяются при запуске": "Game patches, applied at start",
