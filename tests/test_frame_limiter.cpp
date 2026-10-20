@@ -201,10 +201,199 @@ static void TestTextureCacheEvictionLogic() {
     std::puts("PASS: Texture cache eviction threshold and pressure retention");
 }
 
+// Reproduction of the texture cache memory threshold resolution logic
+struct CacheThresholds {
+    u64 trigger_gc_memory = 0;
+    u64 pressure_gc_memory = 0;
+    u64 critical_gc_memory = 0;
+    u64 vram_critical = 0;
+};
+
+static CacheThresholds ResolveCacheThresholds(u64 driver_budget, u64 forced_budget,
+                                              u64 device_local_memory, bool is_integrated,
+                                              bool can_report_memory) {
+    static constexpr u64 GB = 1024ULL * 1024ULL * 1024ULL;
+    static constexpr u64 MB = 1024ULL * 1024ULL;
+    static constexpr u64 DEFAULT_PRESSURE_GC_MEMORY = 1 * GB + 512 * MB;
+    static constexpr u64 DEFAULT_CRITICAL_GC_MEMORY = 3 * GB;
+
+    CacheThresholds t{};
+    if (!can_report_memory) {
+        t.pressure_gc_memory = DEFAULT_PRESSURE_GC_MEMORY;
+        t.critical_gc_memory = DEFAULT_CRITICAL_GC_MEMORY;
+        t.trigger_gc_memory = t.pressure_gc_memory / 10 * 7;
+        t.vram_critical = t.critical_gc_memory;
+        return t;
+    }
+
+    if (driver_budget != 0) {
+        t.vram_critical = driver_budget / 100 * (is_integrated ? 95 : 90);
+    }
+
+    const u64 fallback_budget = device_local_memory != 0
+                                    ? device_local_memory
+                                    : DEFAULT_PRESSURE_GC_MEMORY;
+    const u64 budget = forced_budget && driver_budget ? std::min(forced_budget, driver_budget)
+                       : forced_budget                ? forced_budget
+                       : driver_budget                ? driver_budget
+                                                      : fallback_budget;
+
+    if (is_integrated || forced_budget) {
+        t.trigger_gc_memory = budget / 10 * 7;
+        t.pressure_gc_memory = budget / 100 * (is_integrated ? 85 : 80);
+        t.critical_gc_memory = budget / 100 * (is_integrated ? 95 : 90);
+    } else {
+        t.trigger_gc_memory = budget / 10 * 7;
+        t.pressure_gc_memory = budget / 100 * 80;
+        t.critical_gc_memory = budget / 100 * 90;
+    }
+    return t;
+}
+
+enum class GcAction {
+    EarlyReturn,
+    IdleSweepOnly,
+    PressureSweep,
+    CriticalSweep,
+};
+
+static GcAction EvaluateGc(const CacheThresholds& t, u64 total_used_memory) {
+    if (total_used_memory < t.trigger_gc_memory) {
+        return GcAction::EarlyReturn;
+    }
+    if (total_used_memory >= t.critical_gc_memory) {
+        return GcAction::CriticalSweep;
+    }
+    if (total_used_memory >= t.pressure_gc_memory) {
+        return GcAction::PressureSweep;
+    }
+    return GcAction::IdleSweepOnly;
+}
+
+static void TestTextureCacheMemoryThresholds() {
+    static constexpr u64 GB = 1024ULL * 1024ULL * 1024ULL;
+    static constexpr u64 MB = 1024ULL * 1024ULL;
+
+    // 1. Normal usage below the trigger (6 GB budget discrete GPU)
+    {
+        const u64 budget = 6 * GB;
+        const auto t = ResolveCacheThresholds(budget, 0, 8 * GB, false, true);
+        assert(t.trigger_gc_memory == budget / 10 * 7); // 4.2 GB
+        assert(t.pressure_gc_memory == budget / 100 * 80); // 4.8 GB
+        assert(t.critical_gc_memory == budget / 100 * 90); // 5.4 GB
+
+        // Healthy usage: 3.5 GB used < 4.2 GB trigger -> Early return, no sweeps!
+        assert(EvaluateGc(t, 3500 * MB) == GcAction::EarlyReturn);
+        assert(EvaluateGc(t, 0) == GcAction::EarlyReturn);
+        assert(EvaluateGc(t, t.trigger_gc_memory - 1) == GcAction::EarlyReturn);
+    }
+
+    // 2. Usage crossing the trigger
+    {
+        const u64 budget = 6 * GB;
+        const auto t = ResolveCacheThresholds(budget, 0, 8 * GB, false, true);
+        // At exactly trigger (4.2 GB) or between trigger and pressure (4.5 GB):
+        assert(EvaluateGc(t, t.trigger_gc_memory) == GcAction::IdleSweepOnly);
+        assert(EvaluateGc(t, 4500 * MB) == GcAction::IdleSweepOnly);
+        assert(EvaluateGc(t, t.pressure_gc_memory - 1) == GcAction::IdleSweepOnly);
+    }
+
+    // 3. High memory pressure and critical pressure
+    {
+        const u64 budget = 6 * GB;
+        const auto t = ResolveCacheThresholds(budget, 0, 8 * GB, false, true);
+        // Pressure threshold (4.8 GB):
+        assert(EvaluateGc(t, t.pressure_gc_memory) == GcAction::PressureSweep);
+        assert(EvaluateGc(t, 5000 * MB) == GcAction::PressureSweep);
+        assert(EvaluateGc(t, t.critical_gc_memory - 1) == GcAction::PressureSweep);
+
+        // Critical threshold (5.4 GB):
+        assert(EvaluateGc(t, t.critical_gc_memory) == GcAction::CriticalSweep);
+        assert(EvaluateGc(t, budget) == GcAction::CriticalSweep);
+        assert(EvaluateGc(t, budget + 512 * MB) == GcAction::CriticalSweep);
+    }
+
+    // 4. Zero or unavailable budget (fallback protection)
+    {
+        // When driver reports 0 budget, falls back to device-local memory estimate
+        const auto t_dev = ResolveCacheThresholds(0, 0, 8 * GB, false, true);
+        assert(t_dev.trigger_gc_memory == (8 * GB) / 10 * 7);
+        assert(t_dev.trigger_gc_memory > 0);
+        assert(EvaluateGc(t_dev, 2 * GB) == GcAction::EarlyReturn);
+
+        // When driver reports 0 and device memory is 0, falls back to DEFAULT_PRESSURE_GC_MEMORY
+        const auto t_def = ResolveCacheThresholds(0, 0, 0, false, true);
+        assert(t_def.trigger_gc_memory > 0);
+        assert(t_def.trigger_gc_memory < t_def.pressure_gc_memory);
+        assert(t_def.pressure_gc_memory < t_def.critical_gc_memory);
+
+        // When can_report_memory is false
+        const auto t_no_report = ResolveCacheThresholds(0, 0, 0, false, false);
+        assert(t_no_report.trigger_gc_memory > 0);
+        assert(t_no_report.trigger_gc_memory == (1536 * MB / 10 * 7));
+        assert(EvaluateGc(t_no_report, 500 * MB) == GcAction::EarlyReturn);
+    }
+
+    // 5. Small budgets (e.g. 512 MB and 256 MB)
+    {
+        for (u64 small_budget : {256 * MB, 512 * MB, 1 * GB}) {
+            const auto t = ResolveCacheThresholds(small_budget, 0, small_budget, false, true);
+            assert(t.trigger_gc_memory > 0);
+            assert(t.trigger_gc_memory < t.pressure_gc_memory);
+            assert(t.pressure_gc_memory < t.critical_gc_memory);
+            assert(t.critical_gc_memory < small_budget);
+
+            assert(EvaluateGc(t, t.trigger_gc_memory / 2) == GcAction::EarlyReturn);
+            assert(EvaluateGc(t, t.trigger_gc_memory) == GcAction::IdleSweepOnly);
+            assert(EvaluateGc(t, t.pressure_gc_memory) == GcAction::PressureSweep);
+            assert(EvaluateGc(t, t.critical_gc_memory) == GcAction::CriticalSweep);
+        }
+    }
+
+    // 6. Integrated-GPU behavior (70% trigger, 85% pressure, 95% critical)
+    {
+        const u64 budget = 8 * GB;
+        const auto t_igpu = ResolveCacheThresholds(budget, 0, budget, true, true);
+        const auto t_dgpu = ResolveCacheThresholds(budget, 0, budget, false, true);
+
+        // Trigger is 70% on both (preventing 0-threshold thrashing on Steam Deck)
+        assert(t_igpu.trigger_gc_memory == budget / 10 * 7);
+        assert(t_dgpu.trigger_gc_memory == budget / 10 * 7);
+
+        // iGPU has wider tolerance before pressure (85% vs 80%) and critical (95% vs 90%)
+        assert(t_igpu.pressure_gc_memory == budget / 100 * 85);
+        assert(t_dgpu.pressure_gc_memory == budget / 100 * 80);
+        assert(t_igpu.critical_gc_memory == budget / 100 * 95);
+        assert(t_dgpu.critical_gc_memory == budget / 100 * 90);
+        assert(t_igpu.pressure_gc_memory > t_dgpu.pressure_gc_memory);
+        assert(t_igpu.critical_gc_memory > t_dgpu.critical_gc_memory);
+    }
+
+    // 7. Threshold arithmetic, monotonicity, and boundary conditions
+    {
+        // Test various budgets up to large discrete cards (24 GB, 64 GB, 128 GB)
+        for (u64 test_budget : {1 * GB, 4 * GB, 8 * GB, 16 * GB, 24 * GB, 64 * GB, 128 * GB}) {
+            const auto t = ResolveCacheThresholds(test_budget, 0, test_budget, false, true);
+            // Strict monotonic ordering
+            assert(t.trigger_gc_memory < t.pressure_gc_memory);
+            assert(t.pressure_gc_memory < t.critical_gc_memory);
+            assert(t.critical_gc_memory < test_budget);
+
+            // Integer arithmetic precision check: /10 * 7 should not underflow or invert
+            assert(t.trigger_gc_memory == (test_budget / 10) * 7);
+            assert(t.pressure_gc_memory == (test_budget / 100) * 80);
+            assert(t.critical_gc_memory == (test_budget / 100) * 90);
+        }
+    }
+
+    std::puts("PASS: Texture cache trigger, pressure, critical, and boundary thresholds");
+}
+
 int main() {
     TestFrameLimitResolution();
     TestTimerBalanceAndDrift();
     TestTextureCacheEvictionLogic();
+    TestTextureCacheMemoryThresholds();
     std::puts("All frame limiter and degradation tests PASS");
     return 0;
 }

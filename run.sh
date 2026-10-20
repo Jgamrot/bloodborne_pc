@@ -214,7 +214,14 @@ else
     probe=out/bb-probe
 fi
 probe_args=("$out/boot-linked.bin" --content-profile "$out/content.bin" --patches "$out/patches.bin" --app0 "$game" --user "${BB_USER_DIR:-$data/user}" --timeout "${BB_TIMEOUT:-0}" "$@")
-if [[ -n ${mod_game:-} ]]; then
+
+# Supervisor loop: monitors probe execution, handles exit code 85 (Restart to Apply)
+consecutive_restarts=0
+max_consecutive_restarts=1
+min_session_duration=${BB_RESTART_RESET_SECS:-2}
+
+while true; do
+    session_start=$SECONDS
     "$probe" "${probe_args[@]}" &
     mod_pid=$!
     trap 'kill -TERM "$mod_pid" 2>/dev/null || true' TERM INT
@@ -222,6 +229,33 @@ if [[ -n ${mod_game:-} ]]; then
     wait "$mod_pid" || mod_status=$?
     # An interrupted wait must finish the child before removing its mounted view.
     if kill -0 "$mod_pid" 2>/dev/null; then wait "$mod_pid" || mod_status=$?; fi
-    exit "$mod_status"
-fi
-exec "$probe" "${probe_args[@]}"
+    session_duration=$(( SECONDS - session_start ))
+
+    # If the session achieved stable gameplay/runtime (>= min_session_duration) or touched the steady marker,
+    # reset the rapid consecutive restart counter so future legitimate restarts succeed.
+    steady_marker="$data/session_steady"
+    if [[ -f "$steady_marker" ]]; then
+        rm -f "$steady_marker"
+        consecutive_restarts=0
+    elif [[ $session_duration -ge $min_session_duration ]]; then
+        consecutive_restarts=0
+    fi
+
+    # Exit code 85 is the explicit runtime restart intent (Restart to Apply).
+    if [[ $mod_status -eq 85 && $consecutive_restarts -lt $max_consecutive_restarts ]]; then
+        consecutive_restarts=$((consecutive_restarts + 1))
+        echo "Supervisor: Restart requested by runtime (exit code 85). Re-generating patches with updated configuration..."
+        "$PYTHON" scripts/patches.py --out "$out" --fps "$fps" --extra "${BB_PATCHES:-}" --settings "$BB_CONFIG" --game-dir "$game" --render-res "${BB_RENDER_RES:-}" --output-res "${BB_OUTPUT_RES:-}" \
+            --patches-dir "${BB_PATCHES_DIR:-$data/patches}" --patches-config "${BB_PATCHES_CONFIG:-$data/patches.json}" || {
+            echo "Supervisor: Failed to re-generate patches for restart." >&2
+            exit 1
+        }
+        echo "Supervisor: Relaunching game..."
+        continue
+    elif [[ $mod_status -eq 85 ]]; then
+        echo "Supervisor: Maximum consecutive restart attempts ($max_consecutive_restarts) reached without steady gameplay; refusing endless loop." >&2
+        exit 85
+    else
+        exit "$mod_status"
+    fi
+done

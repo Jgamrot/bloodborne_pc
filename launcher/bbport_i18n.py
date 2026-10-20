@@ -198,6 +198,42 @@ EN = {
     "Чтение данных GPU процессором": "GPU data readbacks by the CPU",
     "Relaxed (по умолчанию)": "Relaxed (default)",
     "Выключены": "Off",
+    # Redesigned graphics sections & badges
+    "1. Рендеринг и разрешение": "1. Rendering and Resolution",
+    "Разрешение вывода, режим отображения и синхронизация кадров":
+        "Output resolution, display mode, and frame presentation",
+    "2. Апскейлинг и реконструкция": "2. Upscaling and Temporal Reconstruction",
+    "Реконструкция изображения из пониженного разрешения рендеринга":
+        "Image reconstruction from lower internal render resolutions",
+    "Предупреждение: FSR 4 на RX 6600M (RDNA 2)": "Warning: FSR 4 on RX 6600M (RDNA 2)",
+    "Experimental on this GPU. AMD Radeon RX 6600M is RDNA 2. FSR 4 may run significantly slower or less reliably than FSR 3.1. Performance is not guaranteed. If you experience frame drops, stuttering, or instability, switch to FSR 3.1.":
+        "Experimental on this GPU. AMD Radeon RX 6600M is RDNA 2. FSR 4 may run significantly slower or less reliably than FSR 3.1. Performance is not guaranteed. If you experience frame drops, stuttering, or instability, switch to FSR 3.1.",
+    "FSR 4 [Experimental ⚠️]": "FSR 4 [Experimental ⚠️]",
+    "FSR 4.1.1 [Experimental ⚠️]": "FSR 4.1.1 [Experimental ⚠️]",
+    "FSR 3.1 [Рекомендуется]": "FSR 3.1 [Recommended]",
+    "FSR 3": "FSR 3.1 [Recommended]",
+    "FSR 4": "FSR 4",
+    "FSR 4.1.1": "FSR 4.1.1",
+    "3. Качество изображения и резкость": "3. Image Quality and Sharpening",
+    "Повышение четкости и графические эффекты рендеринга":
+        "Sharpening filter and in-game post-processing effects",
+    "Резкость (RCAS) [Применяется сразу]": "Sharpening (RCAS) [Immediate]",
+    "AMD FidelityFX Robust Contrast Adaptive Sharpening; применяется сразу":
+        "AMD FidelityFX Robust Contrast Adaptive Sharpening; applies immediately",
+    "Сила резкости [Применяется сразу]": "Sharpness [Immediate]",
+    "Коэффициент 0.0–2.0 (по умолчанию 0.50); применяется сразу":
+        "Sharpness amount 0.0–2.0 (default 0.50); applies immediately",
+    "4. Совместимость и конвейер GPU": "4. Compatibility and GPU Pipeline",
+    "Низкоуровневые параметры Vulkan; при нестабильности выключите":
+        "Low-level Vulkan pipeline and synchronization settings",
+    "5. Производительность и диагностика": "5. Performance and Diagnostics",
+    "Ограничение частоты кадров и сбор телеметрии":
+        "Frame limiter and telemetry logs",
+    "Показывать FPS [Применяется сразу]": "Show FPS [Immediate]",
+    "Встроенный счетчик кадров в левом верхнем углу":
+        "Built-in overlay frame rate counter",
+    "ВНИМАНИЕ: На AMD RX 6000 (RDNA 2) возможен сбой видеочипа (device loss). Оставьте выключенным.":
+        "WARNING: On AMD RX 6000 (RDNA 2) GPU device-loss crashes can occur. Keep disabled.",
     # Developer
     "Для разработчика": "Developer",
     "Статистика кадров в журнале": "Frame statistics in the log",

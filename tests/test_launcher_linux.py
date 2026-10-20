@@ -502,7 +502,7 @@ class ComboRowTests(unittest.TestCase):
         launcher.set_language("en")
         row = self.combo(launcher.UPSCALERS, "fsr3")
         model = row.get_model()
-        self.assertEqual(model.get_string(2), "FSR 3")
+        self.assertEqual(model.get_string(2), "FSR 3.1 [Recommended]")
         self.assertEqual(model.get_string(3), "DLSS (NVIDIA GeForce RTX)")
         self.assertEqual(model.get_string(4), "TAA (native anti-aliasing)")
         self.assertEqual(model.get_string(5), "Off")
@@ -855,7 +855,7 @@ class DefinitionsTests(unittest.TestCase):
     def test_upscaler_labels_are_translated(self):
         launcher.set_language("en")
         self.assertEqual([launcher.tr(label) for label, _ in launcher.UPSCALERS],
-                         ["FSR 4", "FSR 4.1.1", "FSR 3", "DLSS (NVIDIA GeForce RTX)",
+                         ["FSR 4 [Experimental ⚠️]", "FSR 4.1.1 [Experimental ⚠️]", "FSR 3.1 [Recommended]", "DLSS (NVIDIA GeForce RTX)",
                           "TAA (native anti-aliasing)", "Off"])
         launcher.set_language("ru")
         self.assertEqual([launcher.tr(label) for label, _ in launcher.UPSCALERS],

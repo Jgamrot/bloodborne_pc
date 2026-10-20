@@ -82,13 +82,17 @@ struct Fsr4Upscaler::Impl {
     /// `recording`: called while a frame's command buffer is being recorded; it is left open
     /// (Finish() would submit it under the caller).
     void Destroy(bool recording = false) {
-        if (!backend_ok && !context_ok) {
+        if (!backend_ok && !context_ok && !fsr411) {
             return;
         }
         if (recording) {
             scheduler.WaitSubmitted();
         } else {
             scheduler.Finish();
+        }
+        if (fsr411) {
+            fsr411.reset();
+            fsr411_ticks.clear();
         }
         if (context_ok) {
             ffxFsr4V07DestroyContext(&context, nullptr);

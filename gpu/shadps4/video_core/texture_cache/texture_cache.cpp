@@ -41,9 +41,9 @@ TextureCache::TextureCache(const Vulkan::Instance& instance_, Vulkan::Scheduler&
 
     // Set up garbage collection parameters.
     if (!instance.CanReportMemoryUsage()) {
-        trigger_gc_memory = 0;
         pressure_gc_memory = DEFAULT_PRESSURE_GC_MEMORY;
         critical_gc_memory = DEFAULT_CRITICAL_GC_MEMORY;
+        trigger_gc_memory = static_cast<u64>(pressure_gc_memory / 10 * 7);
         return;
     }
 
@@ -59,7 +59,9 @@ TextureCache::TextureCache(const Vulkan::Instance& instance_, Vulkan::Scheduler&
     critical_gc_memory = static_cast<u64>(
         std::max<u64>(std::min(device_local_memory - min_vacancy_critical, min_spacing_critical),
                       DEFAULT_CRITICAL_GC_MEMORY));
-    trigger_gc_memory = static_cast<u64>((device_local_memory - mem_threshold) / 2);
+    trigger_gc_memory = static_cast<u64>(
+        device_local_memory > 0 ? (static_cast<u64>(device_local_memory) / 10 * 7)
+                                : (static_cast<u64>(DEFAULT_PRESSURE_GC_MEMORY) / 10 * 7));
 }
 
 TextureCache::~TextureCache() = default;
@@ -1136,15 +1138,17 @@ void TextureCache::GarbageCollectImages() {
         if (driver_budget != 0) {
             vram_critical = driver_budget / 100 * (instance.IsIntegrated() ? 95 : 90);
         }
+        const u64 fallback_budget = instance.GetTotalMemoryBudget() != 0
+                                        ? instance.GetTotalMemoryBudget()
+                                        : static_cast<u64>(DEFAULT_PRESSURE_GC_MEMORY);
         const u64 budget = forced_budget && driver_budget ? std::min(forced_budget, driver_budget)
                            : forced_budget                ? forced_budget
-                                                          : driver_budget;
+                           : driver_budget                ? driver_budget
+                                                          : fallback_budget;
         if (instance.IsIntegrated() || forced_budget) {
-            if (budget != 0) {
-                trigger_gc_memory = budget / 10 * 7;
-                pressure_gc_memory = budget / 100 * (instance.IsIntegrated() ? 85 : 80);
-                critical_gc_memory = budget / 100 * (instance.IsIntegrated() ? 95 : 90);
-            }
+            trigger_gc_memory = budget / 10 * 7;
+            pressure_gc_memory = budget / 100 * (instance.IsIntegrated() ? 85 : 80);
+            critical_gc_memory = budget / 100 * (instance.IsIntegrated() ? 95 : 90);
         } else {
             // bbport: on a discrete GPU the startup marks put pressure at 40% of the budget
             // (2.5 GB of an 8 GB laptop RTX 4060's 6.1 GB): usage, which counts every buffer and
@@ -1153,10 +1157,9 @@ void TextureCache::GarbageCollectImages() {
             // Pressure at 80% and critical at 90% of the driver's budget; below them only the
             // idle rule (images unused for BB_GC_IDLE_SECONDS) applies, which keeps the issue #32
             // fix: the textures of areas left behind still go.
-            if (budget != 0) {
-                pressure_gc_memory = budget / 100 * 80;
-                critical_gc_memory = budget / 100 * 90;
-            }
+            trigger_gc_memory = budget / 10 * 7;
+            pressure_gc_memory = budget / 100 * 80;
+            critical_gc_memory = budget / 100 * 90;
         }
     }
     // bbport: gc_tick (one per guest submission, hundreds a second) at each of the last 64

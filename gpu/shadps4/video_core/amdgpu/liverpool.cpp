@@ -1130,9 +1130,17 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                     if (event->event_type.Value() == EventType::PixelPipeStatDump) {
                         static constexpr u64 OcclusionCounterValidMask = 0x8000000000000000ULL;
                         static constexpr u64 OcclusionCounterStep = 0x2FFFFFFULL;
+                        // bbport: the counters are guest-visible; write them after fences the
+                        // recording thread deferred earlier (as WriteData/EOP/EOS already do).
+                        if (rasterizer) {
+                            rasterizer->WaitDeferredSignals();
+                        }
                         u64* results = event->Address<u64*>();
                         for (s32 i = 0; i < num_counter_pairs; ++i, results += 2) {
-                            *results = pixel_counter | OcclusionCounterValidMask;
+                            const u64 value = pixel_counter | OcclusionCounterValidMask;
+                            BbWriteLog::Note(reinterpret_cast<u64>(results), &value, sizeof(value),
+                                             BbWriteLog::DmaData);
+                            *results = value;
                         }
                         pixel_counter += OcclusionCounterStep;
                     }
@@ -1587,6 +1595,10 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
         }
         case PM4ItOpcode::MemSemaphore: {
             const auto* mem_semaphore = reinterpret_cast<const PM4CmdMemSemaphore*>(header);
+            // bbport: the semaphore is guest memory; do not overtake deferred fences.
+            if (rasterizer) {
+                rasterizer->WaitDeferredSignals();
+            }
             if (mem_semaphore->IsSignaling()) {
                 mem_semaphore->Signal();
             } else {

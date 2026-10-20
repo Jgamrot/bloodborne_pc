@@ -67,7 +67,8 @@ CONTROL_SCHEMES = [
     ("Геймпад Xbox", "xbox"),
     ("Геймпад PlayStation", "playstation"),
 ]
-UPSCALERS = [("FSR 4", "fsr4"), ("FSR 4.1.1", "fsr411"), ("FSR 3", "fsr3"),
+UPSCALERS = [("FSR 4 [Experimental ⚠️]", "fsr4"), ("FSR 4.1.1 [Experimental ⚠️]", "fsr411"),
+             ("FSR 3.1 [Рекомендуется]", "fsr3"),
              ("DLSS (NVIDIA GeForce RTX)", "dlss"),
              ("TAA (нативное сглаживание)", "taa"), ("Выключен", "off")]
 PRESETS = [("Native AA", 0), ("Quality (x1.5)", 1), ("Balanced (x1.7)", 2),
@@ -590,7 +591,10 @@ class LauncherWindow(Adw.ApplicationWindow):
         self.refresh_patches()
         page.add(self.patches_group)
 
-        screen = Adw.PreferencesGroup(title=tr("Экран"))
+        # 1. Rendering and Resolution
+        screen = Adw.PreferencesGroup(
+            title=tr("1. Рендеринг и разрешение"),
+            description=tr("Разрешение вывода, режим отображения и синхронизация кадров"))
         self.output_row = combo_row(tr("Разрешение вывода"),
                                     tr("Апскейлер дорисовывает кадр; Steam Deck — 720p"),
                                     OUTPUT_RES, self.ini.get("output_res", "1920x1080"))
@@ -605,35 +609,39 @@ class LauncherWindow(Adw.ApplicationWindow):
                                   LIVE_RESOLUTION, self.ini.get("live_resolution", "0"))
         screen.add(self.live_row)
         self.fullscreen_row = Adw.SwitchRow(title=tr("Полноэкранный режим"),
+                                            subtitle=tr("Применяется сразу"),
                                             active=self.settings["fullscreen"])
         screen.add(self.fullscreen_row)
         self.present_row = combo_row(tr("Режим показа кадров"), None, PRESENT_MODES,
                                      self.settings["present_mode"])
         screen.add(self.present_row)
-        self.hdr_row = Adw.SwitchRow(title=tr("Разрешить HDR"), active=self.settings["hdr"])
+        self.hdr_row = Adw.SwitchRow(title=tr("Разрешить HDR"),
+                                     subtitle=tr("Требуется поддержка HDR на дисплее"),
+                                     active=self.settings["hdr"])
         screen.add(self.hdr_row)
         page.add(screen)
 
+        # 2. Upscaling and Temporal Reconstruction
         upscaler = Adw.PreferencesGroup(
-            title=tr("Апскейлер"),
-            description=tr("Хранится в bbport.ini; в игре меняется через меню (Insert или L3+R3)"))
+            title=tr("2. Апскейлинг и реконструкция"),
+            description=tr("Реконструкция изображения из пониженного разрешения рендеринга"))
         self.upscaler_row = combo_row(tr("Апскейлер"), None, UPSCALERS, self.ini["upscaler"])
         self.upscaler_row.connect("notify::selected", lambda *_: self.update_upscaler_status())
         upscaler.add(self.upscaler_row)
+
+        self.fsr4_warning_row = Adw.ActionRow(
+            title=tr("Предупреждение: FSR 4 на RX 6600M (RDNA 2)"),
+            subtitle=tr("Experimental on this GPU. AMD Radeon RX 6600M is RDNA 2. FSR 4 may run significantly slower or less reliably than FSR 3.1. Performance is not guaranteed. If you experience frame drops, stuttering, or instability, switch to FSR 3.1."))
+        warn_img = Gtk.Image()
+        warn_img.set_from_icon_name("dialog-warning-symbolic")
+        self.fsr4_warning_row.add_prefix(warn_img)
+        upscaler.add(self.fsr4_warning_row)
+
         self.preset_row = combo_row(tr("Пресет"), None, PRESETS,
                                     ini_int(self.ini, "preset", int(INI_DEFAULTS["preset"])))
         self.preset_row.connect("notify::selected", lambda *_: self.update_upscaler_status())
         self.output_row.connect("notify::selected", lambda *_: self.update_upscaler_status())
         upscaler.add(self.preset_row)
-        self.sharpen_row = Adw.SwitchRow(title=tr("Резкость (RCAS)"),
-                                         active=self.ini.get("sharpen") == "1")
-        upscaler.add(self.sharpen_row)
-        self.sharpness_row = Adw.SpinRow.new_with_range(0.0, 2.0, 0.05)
-        self.sharpness_row.set_title(tr("Сила резкости"))
-        self.sharpness_row.set_digits(2)
-        self.sharpness_row.set_value(max(0.0, min(2.0, ini_float(
-            self.ini, "sharpness", float(INI_DEFAULTS["sharpness"])))))
-        upscaler.add(self.sharpness_row)
 
         self.fsr4_row = Adw.ActionRow(title=tr("Ассеты FSR 4"))
         self.fsr4_progress = Gtk.ProgressBar(hexpand=True, valign=Gtk.Align.CENTER)
@@ -647,19 +655,30 @@ class LauncherWindow(Adw.ApplicationWindow):
 
         self.motion_row = Adw.SwitchRow(
             title=tr("Векторы движения объектов"),
-            subtitle=tr("Меньше гостинга на персонажах; стоит около 10% FPS"),
+            subtitle=tr("ВНИМАНИЕ: На AMD RX 6000 (RDNA 2) возможен сбой видеочипа (device loss). Оставьте выключенным."),
             active=self.ini.get("object_motion") == "1")
         upscaler.add(self.motion_row)
-        self.show_fps_row = Adw.SwitchRow(title=tr("Показывать FPS"),
-                                          active=self.ini.get("show_fps") == "1")
-        upscaler.add(self.show_fps_row)
         page.add(upscaler)
 
-        effects = Adw.PreferencesGroup(title=tr("Эффекты игры"),
-                                       description=tr("Патчи игры, применяются при запуске"))
+        # 3. Image Quality and Sharpening
+        quality = Adw.PreferencesGroup(
+            title=tr("3. Качество изображения и резкость"),
+            description=tr("Повышение четкости и графические эффекты рендеринга"))
+        self.sharpen_row = Adw.SwitchRow(title=tr("Резкость (RCAS) [Применяется сразу]"),
+                                         subtitle=tr("AMD FidelityFX Robust Contrast Adaptive Sharpening; применяется сразу"),
+                                         active=self.ini.get("sharpen") == "1")
+        quality.add(self.sharpen_row)
+        self.sharpness_row = Adw.SpinRow.new_with_range(0.0, 2.0, 0.05)
+        self.sharpness_row.set_title(tr("Сила резкости [Применяется сразу]"))
+        self.sharpness_row.set_subtitle(tr("Коэффициент 0.0–2.0 (по умолчанию 0.50); применяется сразу"))
+        self.sharpness_row.set_digits(2)
+        self.sharpness_row.set_value(max(0.0, min(2.0, ini_float(
+            self.ini, "sharpness", float(INI_DEFAULTS["sharpness"])))))
+        quality.add(self.sharpness_row)
+
         self.lod_row = combo_row(tr("Детализация моделей"), None, MODEL_LOD,
                                  self.ini.get("model_lod", "0"))
-        effects.add(self.lod_row)
+        quality.add(self.lod_row)
         self.effect_rows = {}
         for key, title, default in EFFECTS:
             row = Adw.SwitchRow(title=tr(title),
@@ -668,8 +687,8 @@ class LauncherWindow(Adw.ApplicationWindow):
                 row.set_subtitle(tr("Установите DbgFont14h.ccm и DbgFont14h.tpf в dvdroot_ps4/font "
                                     "из мода Nexus #253"))
             self.effect_rows[key] = row
-            effects.add(row)
-        page.add(effects)
+            quality.add(row)
+        page.add(quality)
 
         enhancements = Adw.PreferencesGroup(
             title=tr("Улучшения (PC)"),
@@ -693,48 +712,56 @@ class LauncherWindow(Adw.ApplicationWindow):
             cheats.add(row)
         page.add(cheats)
 
-        frames = Adw.PreferencesGroup(title=tr("Частота кадров"))
+        # 4. Compatibility and GPU Pipeline
+        compat = Adw.PreferencesGroup(
+            title=tr("4. Совместимость и конвейер GPU"),
+            description=tr("Низкоуровневые параметры Vulkan; при нестабильности выключите"))
+        self.pipe_row = combo_row(
+            tr("Двухстадийный конвейер GPU"),
+            tr("Быстрее на 20–30%; при нестабильности выключите"), DRAW_PIPE,
+            self.settings["draw_pipe"])
+        compat.add(self.pipe_row)
+        self.readbacks_row = combo_row(tr("Чтение данных GPU процессором"), None, READBACKS,
+                                       self.settings["readbacks"])
+        compat.add(self.readbacks_row)
+        page.add(compat)
+
+        # 5. Performance Diagnostics
+        perf = Adw.PreferencesGroup(
+            title=tr("5. Производительность и диагностика"),
+            description=tr("Ограничение частоты кадров и сбор телеметрии"))
+        self.show_fps_row = Adw.SwitchRow(title=tr("Показывать FPS [Применяется сразу]"),
+                                          subtitle=tr("Встроенный счетчик кадров в левом верхнем углу"),
+                                          active=self.ini.get("show_fps") == "1")
+        perf.add(self.show_fps_row)
         self.fps_row = combo_row(tr("Режим"), tr("Какой патч частоты кадров применить к игре"),
                                  FPS_MODES, self.settings["fps_mode"])
-        frames.add(self.fps_row)
+        perf.add(self.fps_row)
         self.limit_row = Adw.SpinRow.new_with_range(0, 480, 1)
         self.limit_row.set_title(tr("Ограничение FPS"))
         self.limit_row.set_subtitle(tr("0 — по частоте экрана (не выше 120 Гц); "
                                        "укажите число, чтобы ограничить иначе"))
         self.limit_row.set_value(self.settings["fps_limit"])
-        frames.add(self.limit_row)
-        page.add(frames)
+        perf.add(self.limit_row)
 
-        perf = Adw.PreferencesGroup(title=tr("Производительность"))
-        self.pipe_row = combo_row(
-            tr("Двухстадийный конвейер GPU"),
-            tr("Быстрее на 20–30%; при нестабильности выключите"), DRAW_PIPE,
-            self.settings["draw_pipe"])
-        perf.add(self.pipe_row)
-        self.readbacks_row = combo_row(tr("Чтение данных GPU процессором"), None, READBACKS,
-                                       self.settings["readbacks"])
-        perf.add(self.readbacks_row)
-        page.add(perf)
-
-        dev = Adw.PreferencesGroup(title=tr("Для разработчика"))
         self.mangohud_row = Adw.SwitchRow(title="MangoHud", active=self.settings["mangohud"])
-        dev.add(self.mangohud_row)
+        perf.add(self.mangohud_row)
         self.stats_row = Adw.SwitchRow(title=tr("Статистика кадров в журнале"),
                                        subtitle="BB_FRAME_STATS",
                                        active=self.settings["frame_stats"])
-        dev.add(self.stats_row)
+        perf.add(self.stats_row)
         self.profile_row = Adw.SwitchRow(title=tr("Профиль GPU в журнале"),
                                          subtitle="BB_GPU_PROFILE",
                                          active=self.settings["gpu_profile"])
-        dev.add(self.profile_row)
+        perf.add(self.profile_row)
         self.validation_row = Adw.SwitchRow(title=tr("Слои валидации Vulkan"),
                                             subtitle=tr("Сильно замедляет"),
                                             active=self.settings["vk_validation"])
-        dev.add(self.validation_row)
+        perf.add(self.validation_row)
         self.extra_row = Adw.EntryRow(title=tr("Доп. переменные (ИМЯ=значение через пробел)"),
                                       text=self.settings["extra_env"])
-        dev.add(self.extra_row)
-        page.add(dev)
+        perf.add(self.extra_row)
+        page.add(perf)
         return page
 
     def on_ui_language(self, row, _param):
@@ -926,6 +953,8 @@ class LauncherWindow(Adw.ApplicationWindow):
         value = combo_value(self.upscaler_row)
         if hasattr(self, "fsr4_row"):
             self.refresh_fsr4_status()
+        if hasattr(self, "fsr4_warning_row"):
+            self.fsr4_warning_row.set_visible(value in ("fsr4", "fsr411"))
         if value == "fsr4":
             missing = fsr4_missing()
             ok = len(missing) == 0

@@ -30,6 +30,7 @@
 #include <execinfo.h>
 #include <sys/syscall.h>
 #include <sys/uio.h>
+#include <sys/prctl.h>
 #endif
 
 typedef struct { uint64_t address, size, flags; } Segment;
@@ -251,6 +252,60 @@ static uint64_t patch_tcb_loads(const Segment *segments, uint64_t count) {
 }
 #endif
 #ifndef _WIN32
+static void dump_frames(ucontext_t *uc);
+/* Terminal-fault diagnostics: the thread that faulted, its registers and guest frame chain, and
+ * the allocator/chunk words around the faulting pointers. The fault is fatal, so this is the
+ * last chance to record what the guest was doing; reads use process_vm_readv so a bad pointer
+ * cannot fault again. */
+static int read_qword(uintptr_t at, uint64_t *value) {
+    struct iovec local = {value, sizeof(*value)}, remote = {(void *)at, sizeof(*value)};
+    return process_vm_readv(getpid(), &local, 1, &remote, 1, 0) == (ssize_t)sizeof(*value);
+}
+static void write_diag(const char *text) {
+    ssize_t written_ = write(2, text, strlen(text));
+    (void)written_;
+}
+static void fault_diag(ucontext_t *uc) {
+    const greg_t *g = uc->uc_mcontext.gregs;
+    char name[17] = {0};
+    prctl(PR_GET_NAME, name, 0, 0, 0);
+    char line[512];
+    snprintf(line, sizeof(line), "  tid=%ld thread=%s rip=%016lx rsp=%016lx rbp=%016lx\n",
+             (long)gettid(), name, (unsigned long)g[REG_RIP], (unsigned long)g[REG_RSP],
+             (unsigned long)g[REG_RBP]);
+    write_diag(line);
+    snprintf(line, sizeof(line),
+             "  rax=%016lx rbx=%016lx rcx=%016lx rdx=%016lx rsi=%016lx rdi=%016lx\n",
+             (unsigned long)g[REG_RAX], (unsigned long)g[REG_RBX], (unsigned long)g[REG_RCX],
+             (unsigned long)g[REG_RDX], (unsigned long)g[REG_RSI], (unsigned long)g[REG_RDI]);
+    write_diag(line);
+    snprintf(line, sizeof(line),
+             "  r8=%016lx r9=%016lx r10=%016lx r11=%016lx r12=%016lx r13=%016lx r14=%016lx "
+             "r15=%016lx\n",
+             (unsigned long)g[REG_R8], (unsigned long)g[REG_R9], (unsigned long)g[REG_R10],
+             (unsigned long)g[REG_R11], (unsigned long)g[REG_R12], (unsigned long)g[REG_R13],
+             (unsigned long)g[REG_R14], (unsigned long)g[REG_R15]);
+    write_diag(line);
+    const uintptr_t allocator = (uintptr_t)g[REG_RBX], chunk = (uintptr_t)g[REG_RAX];
+    size_t at = 0;
+    at += (size_t)snprintf(line, sizeof(line), "  allocator[%016lx]:", (unsigned long)allocator);
+    for (int i = 0; i < 8; ++i) {
+        uint64_t value = 0;
+        read_qword(allocator + (uintptr_t)(0x30 + i * 8), &value);
+        at += (size_t)snprintf(line + at, sizeof(line) - at, " %016lx", (unsigned long)value);
+    }
+    snprintf(line + at, sizeof(line) - at, "\n");
+    write_diag(line);
+    at = (size_t)snprintf(line, sizeof(line), "  chunk[%016lx]:", (unsigned long)chunk);
+    for (int i = 0; i < 8; ++i) {
+        uint64_t value = 0;
+        read_qword(chunk + (uintptr_t)(i * 8), &value);
+        at += (size_t)snprintf(line + at, sizeof(line) - at, " %016lx", (unsigned long)value);
+    }
+    snprintf(line + at, sizeof(line) - at, "\n");
+    write_diag(line);
+    dump_frames(uc);
+}
 static void fault(int sig, siginfo_t *info, void *context) {
     /* GPU page tracking (write-protected guest pages) is resolved first. */
     if (gpu_enabled && sig == SIGSEGV && bbgpu_handle_fault(context, info->si_addr)) return;
@@ -278,6 +333,7 @@ static void fault(int sig, siginfo_t *info, void *context) {
     else
         snprintf(line, sizeof(line), "Fault (signal %d) at RIP %p, address %p\n", sig, (void *)rip, info->si_addr);
     { ssize_t written_=write(2, line, strlen(line)); (void)written_; }
+    fault_diag(uc);
     if (gpu_enabled) bbgpu_dump_guest_writes(context);
     /* Host call chain (frames with unwind info; guest frames end it). */
     void *frames[32];
@@ -408,6 +464,9 @@ static void apply_patches(const char *path, Segment *segments, uint64_t ns, cons
 /* Restarts the game through run.sh (the settings menu: a new render resolution is a patch
  * applied at start). Descriptors are closed first so the old GPU device and its memory are
  * released before the new process opens its own. */
+/* Dedicated exit status signaling an intentional restart request to the supervisor (run.sh / run.py). */
+#define EXIT_RESTART 85
+
 void runtime_restart(void) {
     fflush(NULL);
 #ifdef _WIN32
@@ -428,11 +487,8 @@ void runtime_restart(void) {
     /* The new launch waits for this process's GPU device to go away (run.py --after). */
     TerminateProcess(GetCurrentProcess(),0);
 #else
-    puts("Runtime: restarting through run.sh");
-    syscall(SYS_close_range, 3u, ~0u, 0u);
-    execlp("bash", "bash", "run.sh", (char *)NULL);
-    perror("runtime_restart: exec");
-    _exit(1);
+    puts("Runtime: restart requested to apply settings (signaling supervisor with exit code 85)");
+    _exit(EXIT_RESTART);
 #endif
 }
 

@@ -724,6 +724,7 @@ static BB_GUEST_ABI int64_t quit_yes(int64_t a, int64_t b) {
 static BB_GUEST_ABI int64_t restart_yes(int64_t a, int64_t b) {
     (void)a, (void)b;
     puts("PC menu: Restart to Apply");
+    bbgpu_settings_save();
     runtime_restart();
     return 0;
 }

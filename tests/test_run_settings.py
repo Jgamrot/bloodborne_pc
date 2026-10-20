@@ -160,3 +160,162 @@ class RestartResolutionTests(unittest.TestCase):
         rows = self.run_restarts(ini_extra='fps_mode=60\nfps_limit=60\n', fps_env={'BB_FPS_LIMIT': '0'})
         self.assertEqual(rows[0]['BB_FPS_LIMIT'], '0')
 
+
+class SupervisorRestartTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.data = Path(self.temp.name)
+        out = self.data / 'out'
+        out.mkdir()
+        elf = bytearray(120)
+        struct.pack_into('<Q', elf, 0x20, 64)
+        struct.pack_into('<HH', elf, 0x36, 56, 1)
+        struct.pack_into('<IIQQQQQQ', elf, 64, 1, 0, 0, 0, 0, 0, 0x6000000, 0)
+        (out / 'eboot.elf').write_bytes(elf)
+        (self.data / 'eboot.bin').touch()
+        self.config = self.data / 'bbport.ini'
+        self.config.write_text('upscaler=fsr3\npreset=1\noutput_res=1920x1080\n')
+
+        self.python = self.data / 'python'
+        self.python.write_text(
+            f'#!{sys.executable}\n'
+            'import subprocess, sys\n'
+            'if sys.argv[1] in ("scripts/patches.py", "scripts/mods.py", "scripts/hud_layout.py"):\n'
+            '    sys.exit(subprocess.call([sys.executable, *sys.argv[1:]]))\n'
+        )
+        self.python.chmod(0o755)
+
+    def run_supervisor(self, probe_script, extra_args=None):
+        probe = self.data / 'probe'
+        probe.write_text(probe_script)
+        probe.chmod(0o755)
+        env = dict(
+            os.environ,
+            BB_PREBUILT='1',
+            BB_PROBE=str(probe),
+            PYTHON=str(self.python),
+            BB_DATA_DIR=str(self.data),
+            BB_CONFIG=str(self.config),
+            BB_GAME_DIR=str(self.data),
+        )
+        cmd = [shutil.which('bash'), 'run.sh']
+        if extra_args:
+            cmd.extend(extra_args)
+        proc = subprocess.run(
+            cmd,
+            cwd=ROOT,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+        )
+        return proc
+
+    def test_supervisor_restarts_on_code_85_and_preserves_arguments(self):
+        probe_script = (
+            f'#!{sys.executable}\n'
+            'import sys, os\n'
+            'from pathlib import Path\n'
+            'data = Path(os.environ["BB_DATA_DIR"])\n'
+            'log_file = data / "probe_calls.log"\n'
+            'count = 0\n'
+            'if log_file.is_file():\n'
+            '    count = len(log_file.read_text().splitlines())\n'
+            'with log_file.open("a") as f:\n'
+            '    f.write(f"call {count}: {sys.argv[1:]}\\n")\n'
+            'if count == 0:\n'
+            '    sys.exit(85)\n'
+            'sys.exit(0)\n'
+        )
+        proc = self.run_supervisor(probe_script, extra_args=['--custom-arg', 'value42'])
+        self.assertEqual(proc.returncode, 0)
+        calls = (self.data / "probe_calls.log").read_text().splitlines()
+        self.assertEqual(len(calls), 2)
+        self.assertIn("--custom-arg", calls[0])
+        self.assertIn("value42", calls[0])
+        self.assertIn("--custom-arg", calls[1])
+        self.assertIn("value42", calls[1])
+
+    def test_supervisor_does_not_restart_on_normal_exit(self):
+        probe_script = (
+            f'#!{sys.executable}\n'
+            'import sys, os\n'
+            'from pathlib import Path\n'
+            'data = Path(os.environ["BB_DATA_DIR"])\n'
+            'log_file = data / "probe_calls.log"\n'
+            'with log_file.open("a") as f:\n'
+            '    f.write("call\\n")\n'
+            'sys.exit(0)\n'
+        )
+        proc = self.run_supervisor(probe_script)
+        self.assertEqual(proc.returncode, 0)
+        calls = (self.data / "probe_calls.log").read_text().splitlines()
+        self.assertEqual(len(calls), 1)
+
+    def test_supervisor_does_not_restart_on_runtime_failure(self):
+        probe_script = (
+            f'#!{sys.executable}\n'
+            'import sys, os\n'
+            'from pathlib import Path\n'
+            'data = Path(os.environ["BB_DATA_DIR"])\n'
+            'log_file = data / "probe_calls.log"\n'
+            'with log_file.open("a") as f:\n'
+            '    f.write("call\\n")\n'
+            'sys.exit(2)\n'
+        )
+        proc = self.run_supervisor(probe_script)
+        self.assertEqual(proc.returncode, 2)
+        calls = (self.data / "probe_calls.log").read_text().splitlines()
+        self.assertEqual(len(calls), 1)
+
+    def test_supervisor_bounds_restarts_to_single_attempt(self):
+        probe_script = (
+            f'#!{sys.executable}\n'
+            'import sys, os\n'
+            'from pathlib import Path\n'
+            'data = Path(os.environ["BB_DATA_DIR"])\n'
+            'log_file = data / "probe_calls.log"\n'
+            'with log_file.open("a") as f:\n'
+            '    f.write("call\\n")\n'
+            'sys.exit(85)\n'
+        )
+        proc = self.run_supervisor(probe_script)
+        self.assertEqual(proc.returncode, 85)
+        self.assertIn(b"refusing endless loop", proc.stderr)
+        calls = (self.data / "probe_calls.log").read_text().splitlines()
+        self.assertEqual(len(calls), 2)
+
+    def test_supervisor_allows_subsequent_restart_after_successful_session(self):
+        # A restart requested during a second, stable session must succeed and not be blocked.
+        probe_script = (
+            f'#!{sys.executable}\n'
+            'import sys, os\n'
+            'from pathlib import Path\n'
+            'data = Path(os.environ["BB_DATA_DIR"])\n'
+            'log_file = data / "probe_calls.log"\n'
+            'count = 0\n'
+            'if log_file.is_file():\n'
+            '    count = len(log_file.read_text().splitlines())\n'
+            'with log_file.open("a") as f:\n'
+            '    f.write(f"call {count}\\n")\n'
+            'if count == 0:\n'
+            '    # First user restart request\n'
+            '    sys.exit(85)\n'
+            'elif count == 1:\n'
+            '    # Second session: runs successfully and reaches steady state\n'
+            '    (data / "session_steady").touch()\n'
+            '    # User requests another restart later in gameplay\n'
+            '    sys.exit(85)\n'
+            'else:\n'
+            '    # Third session: runs and exits normally\n'
+            '    sys.exit(0)\n'
+        )
+        proc = self.run_supervisor(probe_script)
+        self.assertEqual(proc.returncode, 0)
+        calls = (self.data / "probe_calls.log").read_text().splitlines()
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(calls, ["call 0", "call 1", "call 2"])
+
+
+

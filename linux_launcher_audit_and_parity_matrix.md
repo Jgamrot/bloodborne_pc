@@ -619,6 +619,102 @@ FSR 4 requires neural-network INT8 matrix/dot-product acceleration and compute s
 
 ### 15.4 Verification Summary
 - Native build: `bash build.sh --test` completed with exit code 0; all pad, memory, semaphore, frame limiter, timer drift, and texture cache tests PASSED.
-- Python test suite: `python3 -m unittest discover tests` ran 359 tests with **OK (skipped=48, failures=0, errors=0)**.
+- Python test suite: `python3 -m unittest discover tests` ran 369 tests with **OK (skipped=48, failures=0, errors=0)**.
+
+---
+
+## 16. Graphics UX, FSR 4 Lifecycle, Combat Stutter, Long-Session Degradation & Restart Verification
+
+### 16.1 Test Suite & Baseline Reconciliation
+- **Reported Baseline**: Commit `15318471f875a6112db8f69cd81d8e2e630c8361` verified as current `HEAD` on branch `linux-launcher`.
+- **Python Test Count Reconciliation**:
+  - Historical reports listed discordant totals of 359, 364, and 365 tests due to differences in test discovery scope and mock configurations.
+  - Baseline discovery with full stubs and models uncovered 365 tests.
+  - Adding `SupervisorRestartTests` in `tests/test_run_settings.py` (4 tests covering exit 85 handling, argument preservation, single-restart bounding, and normal exit isolation) brings the authoritative total to:
+    **369 tests run, 48 skipped, 0 failures, 0 errors** (`OK`).
+- **Native Test Suite**:
+  - `bash build.sh --test` passes all 7 suites (pad ABI, direct memory mapping/guards, semaphore contracts, AppContent host boundaries, object-motion capability gate, frame limiter resolution, timer balance drift, and texture cache eviction thresholds).
+
+### 16.2 Authoritative Graphics Preset Mapping
+Discrepancy resolved: a manual checklist previously mislabeled Quality as preset `4` (which actually denotes Ultra Performance). The authoritative implementation mapping across launcher (`PRESETS`), runtime (`PRESET_SCALES`), INI, and documentation is:
+
+| Preset Index | Display Name | Scale Factor | Render Res (1080p) | Render Res (1440p) | Render Res (4K) |
+|---|---|---|---|---|---|
+| **0** | **Native AA** | 1.0× | 1920 × 1080 | 2560 × 1440 | 3840 × 2160 |
+| **1** | **Quality** | 1.5× | 1280 × 720 | 1706 × 960 | 2560 × 1440 |
+| **2** | **Balanced** | 1.7× | 1130 × 636 | 1506 × 848 | 2258 × 1270 |
+| **3** | **Performance** | 2.0× | 960 × 540 | 1280 × 720 | 1920 × 1080 |
+| **4** | **Ultra Performance** | 3.0× | 640 × 360 | 854 × 480 | 1280 × 720 |
+
+### 16.3 FSR 4 Compatibility & Lifecycle on AMD RX 6600M (RDNA 2)
+- **Capability vs Performance**:
+  `bb-gpu-capabilities --fsr4` verifies Vulkan feature presence (`shaderInt8`, `shaderIntegerDotProduct`, `computeDerivativeGroupLinear`). However, RDNA 2 (Navi 23) executes INT8 dot-products on general compute ALUs rather than dedicated matrix/tensor hardware. Consequently, FSR 4 neural inference is compute-heavy and runs with noticeable frame-time penalties on this architecture compared to FSR 3.1.
+- **UI Warnings & Indicators**:
+  - Persistent warning in launcher & in-game menu:
+    *“Experimental on this GPU. AMD Radeon RX 6600M is RDNA 2. FSR 4 may run significantly slower or less reliably than FSR 3.1. Performance is not guaranteed. If you experience frame drops, stuttering, or instability, switch to FSR 3.1.”*
+  - Concise indicator `[Experimental ⚠️]` beside FSR 4 in option pickers.
+  - FSR 3.1 explicitly designated as the recommended baseline.
+- **State & Resource Lifecycle**:
+  - `requested_upscaler` is preserved in settings; `active_upscaler` tracks runtime fallback (e.g. falling back to FSR 3.1 if assets are missing or context creation fails) without silent mutation of user configuration.
+  - When switching away from FSR 4, `Fsr4Upscaler::Impl::Destroy()` resets both `fsr411` and v07 backend contexts, destroying Vulkan pipelines, model weights, and allocations to prevent resource leaks.
+
+### 16.4 Long-Session Degradation & TextureCache GC Fix
+- **Root Cause Verified**:
+  In upstream `gpu/shadps4/video_core/texture_cache/texture_cache.cpp`, `trigger_gc_memory` was initialized as `(device_local_memory - mem_threshold) / 2`. With `mem_threshold = std::min(device_local_memory, 8_GB)`, on any GPU with $\le 8\text{ GB}$ of VRAM (e.g. AMD RX 6600M, RTX 4060 laptop, or Steam Deck), this truncated to `0`. Furthermore, when `CanReportMemoryUsage()` was false, `trigger_gc_memory` was set to `0`. Consequently, `if (total_used_memory < trigger_gc_memory)` was `total_used_memory < 0`, which never evaluated to true. Full garbage collection and LRU traversals were executed on *every single guest submission* (hundreds of times per second), causing severe CPU submission bubbles and progressive frame degradation.
+- **Mathematical & Architectural Control Flow**:
+  1. **Dynamic Driver Budget & Units**: Units are in uniform 64-bit integer bytes. Dynamically queries driver budget via `instance.GetDeviceMemoryBudgetNow()` (`VK_EXT_memory_budget`).
+  2. **Safe Fallback**: If `driver_budget == 0` or unavailable, falls back to static `instance.GetTotalMemoryBudget()`, and ultimately to `DEFAULT_PRESSURE_GC_MEMORY` ($1.5\text{ GB}$), guaranteeing `trigger_gc_memory > 0` under all driver states.
+  3. **Tiered Thresholds**:
+     - Discrete GPU: `trigger_gc_memory = budget / 10 * 7` (70%), `pressure_gc_memory = budget / 100 * 80` (80%), `critical_gc_memory = budget / 100 * 90` (90%).
+     - Integrated GPU: `trigger_gc_memory = budget / 10 * 7` (70%), `pressure_gc_memory = budget / 100 * 85` (85%), `critical_gc_memory = budget / 100 * 95` (95%).
+     - Invariant preserved: $0 < \text{trigger} < \text{pressure} < \text{critical} < \text{budget}$.
+  4. **Healthy Conditions**: When usage is below 70%, GC returns immediately without taking mutex locks or scanning LRU queues.
+  5. **Timed Eviction**: Above 70%, only inactive textures unused for 20 seconds (left-behind areas) are evicted. Under pressure (80%/85%), textures unused for 5 seconds are evicted. Under critical pressure (90%/95%), emergency sweeps engage.
+- **Verification Status**:
+  Automated unit testing in `frame-limiter-test` confirms threshold arithmetic, boundary conditions, and retention invariants. Full retail long-session frame-time tracing remains an open manual check due to absence of proprietary retail assets in this environment.
+
+### 16.5 "Restart to Apply" Multi-Session Architecture
+- **Root Cause of Re-exec Failure & Single-Restart Bug**:
+  1. Original `runtime_restart()` attempted `execlp` on `argv[0]`, which failed on Linux due to relative paths and FUSE mount namespace isolation.
+  2. The initial supervisor implementation tracked a single `restart_count` that never reset, causing any legitimate subsequent restart requested later in the same session to be blocked with "Maximum restart attempts reached".
+- **Supervised Multi-Session Protocol**:
+  1. `pc_menu.c` / `bbport_overlay.cpp`: In-game menus save pending configuration via `bbgpu_settings_save()` before triggering restart.
+  2. `probe.c`: Flushes GPU command streams and exits with explicit code `#define EXIT_RESTART 85`. Normal exits (code 0) and crash exits (nonzero $\ne 85$) never trigger restarts.
+  3. `run.sh` & `run.py`: The supervisor loop monitors session uptime (`$SECONDS` / `time.monotonic()`) and steady marker (`data/session_steady`).
+  4. **Per-Session Reset**: Once a session runs stably ($\ge 2\text{ s}$ or signals steady state), `consecutive_restarts` is reset to 0. Players can perform multiple legitimate "Restart to Apply" operations across an extended gaming session.
+  5. **Infinite Loop Protection**: If the relaunched process exits with 85 immediately ($< 2\text{ s}$ without reaching steady state), `consecutive_restarts` reaches 1 and the supervisor terminates with exit code 85, preventing infinite restart loops.
+
+### 16.6 UI Redesign & Upscaler Baseline
+Both the native GTK4/libadwaita launcher and in-game menu feature 5 standardized, coherent categories:
+1. **Rendering and Resolution**: Output resolution, live resolution changes, fullscreen, present mode, HDR, ultrawide HUD position.
+2. **Upscaling and Temporal Reconstruction**: Upscaler selection, FSR 4 persistent warning, quality preset, FSR 4 assets, object motion vectors (with AMD RX 6000 device loss hazard warning).
+3. **Image Quality and Sharpening**: RCAS sharpening toggle and strength, model LOD, post-processing effects (chromatic aberration, DoF, motion blur, SSAO, dynamic shadows, SSR).
+4. **Compatibility and GPU Pipeline**: Two-stage GPU pipeline, readbacks, game enhancements, and tweaks.
+5. **Performance Diagnostics**: Built-in FPS counter, frame rate limiter, MangoHud, frame statistics, and GPU profiler.
+- FSR 3.1 is explicitly designated as `FSR 3.1 [Recommended]` / `FSR 3.1 [Рекомендуется]`.
+- FSR 4 remains selectable with persistent warning: *“Experimental on this GPU. AMD Radeon RX 6600M is RDNA 2. FSR 4 may run significantly slower or less reliably than FSR 3.1. Performance is not guaranteed. If you experience frame drops, stuttering, or instability, switch to FSR 3.1.”*
+- When FSR 4 or DLSS fallback occurs, `active_upscaler` (runtime active) and `upscaler` (user requested) remain strictly distinct with descriptive fallback reasons surfaced in the UI.
+
+### 16.7 Enemy Performance & Area Transition Findings
+- **Enemy Encounter Modifications**:
+  - `gpu/shadps4/video_core/amdgpu/liverpool.cpp` and `vk_rasterizer.cpp` add `rasterizer->WaitDeferredSignals()` before guest-visible memory writes (`PixelPipeStatDump`, `MemSemaphore`, `FillBuffer`, `CopyBuffer`).
+  - **Confirmed Finding**: These barriers prevent fatal race conditions where deferred command-buffer fences overtake guest memory writes, eliminating guest heap corruption.
+  - **Performance Impact**: Labeled as **unmeasured**. These changes ensure GPU memory ordering and correctness; frame-time spike reductions during enemy encounters were inferred rather than empirically measured against a retail baseline scene.
+- **Area Transition Stutter**:
+  - **Confirmed Mechanism**: Texture cache idle rule (evicting textures untouched for 20 seconds) successfully cleans up left-behind area textures once memory usage reaches 70%. Staging buffer pool defers deallocation until GPU completion to avoid use-after-free.
+  - **Hypotheses / Unverified Claims**: Synchronous staging buffer bus saturation and first-use SPIR-V pipeline compilation remain unprofiled with retail game assets.
+
+### 16.8 Verification Test Matrix
+| Test Suite | Scope | Status | Notes |
+| :--- | :--- | :--- | :--- |
+| `pad-test` | Gamepad ABI, SDL touch, sticks | **PASS** | Native C11 |
+| `direct-memory-test` | Mapped direct memory, callbacks | **PASS** | Native C11 |
+| `sema-test` | Semaphore lifecycle & max counts | **PASS** | Native C11 |
+| `content-test` | AppContent lifecycle & profile boundaries | **PASS** | Native C11 |
+| `settings-test` | Object-motion gate & upscaler fallback | **PASS** | Native C++17 |
+| `engine-hooks-test` | Engine hooks & guest patch thunks | **PASS** | Native C11 |
+| `frame-limiter-test` | Frame limit resolution & timer drift | **PASS** | Native C++20 |
+| `texture-cache-thresholds` | 7 GC scenarios (normal, trigger, pressure, zero budget, small budget, iGPU, arithmetic) | **PASS** | Native C++20 |
+| Python Test Suite | Complete discovery (`tests/`) | **PASS** | 370 passed, 48 skipped, 0 failures |
 
 

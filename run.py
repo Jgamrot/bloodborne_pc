@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 
 PORT = Path(__file__).resolve().parent
 # The Xbox button prompts mod the package ships (mods/).
@@ -449,16 +450,47 @@ def main():
                    '--user', str(user_dir),
                    '--timeout', env.get('BB_TIMEOUT', '0'), *args]
         # No stdin: an inherited pipe (shells such as Git Bash) cost the game its console output.
-        game_proc = subprocess.Popen(command, stdin=subprocess.DEVNULL, creationflags=no_console())
-        started = []
-        try:
-            started = start_companions(data, env, game_proc.pid)
-            return game_proc.wait()
-        finally:
-            for proc in started:
-                proc.terminate()
-            if game_proc.poll() is None:
-                game_proc.terminate()
+        consecutive_restarts = 0
+        max_consecutive_restarts = 1
+        min_session_duration = float(env.get('BB_RESTART_RESET_SECS', '2.0'))
+        while True:
+            start_time = time.monotonic()
+            game_proc = subprocess.Popen(command, stdin=subprocess.DEVNULL, creationflags=no_console())
+            started = []
+            try:
+                started = start_companions(data, env, game_proc.pid)
+                status = game_proc.wait()
+            finally:
+                for proc in started:
+                    proc.terminate()
+                if game_proc.poll() is None:
+                    game_proc.terminate()
+
+            duration = time.monotonic() - start_time
+            steady_marker = data / 'session_steady'
+            if steady_marker.is_file():
+                try:
+                    steady_marker.unlink()
+                except OSError:
+                    pass
+                consecutive_restarts = 0
+            elif duration >= min_session_duration:
+                consecutive_restarts = 0
+
+            if status == 85 and consecutive_restarts < max_consecutive_restarts:
+                consecutive_restarts += 1
+                print("Supervisor: Restart requested by runtime (exit code 85). Re-applying configuration...")
+                run_script('patches.py', '--out', out, '--fps', fps, '--extra', extra,
+                           '--settings', config, '--game-dir', game, '--render-res', env.get('BB_RENDER_RES', ''),
+                           '--output-res', env.get('BB_OUTPUT_RES', ''),
+                           '--patches-dir', env.get('BB_PATCHES_DIR', data / 'patches'),
+                           '--patches-config', env.get('BB_PATCHES_CONFIG', data / 'patches.json'))
+                continue
+            elif status == 85:
+                print(f"Supervisor: Maximum consecutive restart attempts ({max_consecutive_restarts}) reached without steady gameplay; refusing endless loop.",
+                      file=sys.stderr)
+                return 85
+            return status
     finally:
         if mod_view:
             # Read-only game files leave read-only links (mods.remove_overlay clears them).

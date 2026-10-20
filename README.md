@@ -67,38 +67,54 @@ Investigation into the Vulkan rendering pipeline ([`gpu/shadps4/video_core/rende
 
 ---
 
-## Graphics Configuration & Scaling
+## Graphics Configuration, Upscaling & Performance Lifecycle
 
-### Render Resolution vs. Output Resolution
+### Authoritative Preset Mapping
 
-- **Output Resolution** (`output_res` in `bbport.ini`):
-  The target resolution presented to your display:
-  - 1280×720 (Steam Deck / 720p)
-  - 1920×1080 (1080p Standard)
-  - 2560×1440 (1440p QHD)
-  - 3840×2160 (4K UHD)
-  - Ultrawide formats: 2560×1080, 3440×1440, 3840×1600, 5120×1440.
+The internal render target dimensions before upscaler reconstruction follow a single authoritative mapping across the launcher, runtime, and documentation:
 
-- **Internal Resolution Presets** (`preset` in `bbport.ini`):
-  Controls the internal render target dimensions before upscaler reconstruction:
-  - **Native AA** (`0`): 1.0× scaling (renders internally at full output resolution).
-  - **Quality** (`1`): 1.5× scale factor (e.g., 1080p → 1280×720; 1440p → 1706×960; 4K → 2560×1440).
-  - **Balanced** (`2`): 1.7× scale factor (e.g., 1080p → 1130×636; 4K → 2258×1270).
-  - **Performance** (`3`): 2.0× scale factor (e.g., 1080p → 960×540; 4K → 1920×1080).
-  - **Ultra Performance** (`4`): 3.0× scale factor (e.g., 1080p → 640×360; 4K → 1280×720).
+| Preset Index | Display Name | Internal Scale Factor | 1080p Render Target | 1440p Render Target | 4K Render Target | Persisted Value |
+|---|---|---|---|---|---|---|
+| **0** | **Native AA** | 1.0× | 1920 × 1080 | 2560 × 1440 | 3840 × 2160 | `preset=0` |
+| **1** | **Quality** | 1.5× | 1280 × 720 | 1706 × 960 | 2560 × 1440 | `preset=1` |
+| **2** | **Balanced** | 1.7× | 1130 × 636 | 1506 × 848 | 2258 × 1270 | `preset=2` |
+| **3** | **Performance** | 2.0× | 960 × 540 | 1280 × 720 | 1920 × 1080 | `preset=3` |
+| **4** | **Ultra Performance** | 3.0× | 640 × 360 | 854 × 480 | 1280 × 720 | `preset=4` |
 
-- **Supported Upscalers** (`upscaler` in `bbport.ini`):
-  - `fsr4`: AMD FidelityFX Super Resolution 4 (best quality on GPUs with INT8 fast dot product support).
-  - `fsr411`: AMD FSR 4.1.1.
-  - `fsr3`: AMD FSR 3.1 (universal compatibility across AMD, Intel, and NVIDIA).
-  - `dlss`: NVIDIA DLSS (requires NVIDIA GeForce RTX series).
-  - `taa`: Native-resolution Temporal Anti-Aliasing (preset selector automatically reflects native resolution).
-  - `off`: Unfiltered output.
+> [!NOTE]
+> **Checklist Discrepancy Resolved**: An earlier manual checklist incorrectly labeled Quality as preset `4`. Quality is preset `1` (1.5× scale); preset `4` represents Ultra Performance (3.0× scale).
 
-- **Post-Processing & Sharpening**:
-  - RCAS Sharpening (`sharpen=1` and `sharpness=0.00` to `1.00`).
-  - Object Motion Vectors (`object_motion=1`).
-  - Live Resolution (`live_resolution=0` for maximum speed via start-up patch, `1` for live dynamic switching).
+### Upscaler Compatibility & FSR 4 on AMD RX 6600M (RDNA 2)
+
+- **FSR 3.1 (Recommended Baseline)**:
+  Universal compatibility, proven stability, and optimal performance on AMD RDNA 2 hardware.
+- **FSR 4 [Experimental ⚠️]**:
+  Selectable for users who wish to test it. On AMD Radeon RX 6600M (RDNA 2, 8 GB VRAM), hardware capability checks detect INT8 dot products and derivative groups. However, RDNA 2 lacks dedicated tensor/matrix cores and executes neural-model INT8 operations via general compute ALUs, incurring high execution latency.
+  - **Persistent Warning**: The graphics UI displays:
+    *“Experimental on this GPU. AMD Radeon RX 6600M is RDNA 2. FSR 4 may run significantly slower or less reliably than FSR 3.1. Performance is not guaranteed. If you experience frame drops, stuttering, or instability, switch to FSR 3.1.”*
+  - **Honest Upscaler Reporting**: User selection (`upscaler`) is kept distinct from the active upscaler (`active_upscaler`). If FSR 4 initialization or assets fail, the runtime falls back to FSR 3.1, logs the reason, and informs the UI without silently altering user settings.
+  - **Clean Resource Lifecycle**: Switching away from FSR 4 triggers complete destruction (`Fsr4Upscaler::Impl::Destroy()`) of backend contexts, pipelines, and allocations, freeing all GPU memory.
+
+### Long-Session Degradation & Texture Cache Fix
+
+- On 8 GB discrete GPUs, `trigger_gc_memory` previously evaluated to 0 due to integer truncation `(device_local_memory - mem_threshold) / 2 = (8GB - 8GB) / 2 = 0`.
+- This triggered heavy garbage collection sweeps on every single frame submission, causing frame times to degrade over time.
+- Fixed in `gpu/shadps4/video_core/texture_cache/texture_cache.cpp` by gating GC sweeps to when VRAM usage exceeds 70% of budget.
+
+### "Restart to Apply" Supervision Lifecycle
+
+- Selecting "Restart to Apply" saves settings via `bbgpu_settings_save()`, flushes GPU queues and logs, and exits cleanly with exit code `85` (`EXIT_RESTART`).
+- The supervisor in `run.sh` and `run.py` catches exit code `85`, re-generates patches with updated settings via `scripts/patches.py`, and relaunches the game process.
+- All launch arguments, working directory, and environment variables are preserved. The supervisor bounds restarts to at most 1 relaunch attempt, preventing infinite loops.
+
+### Redesigned 5-Section Graphics UI
+
+Both the native GTK4/libadwaita launcher and in-game menu follow 5 clear categories:
+1. **Rendering and Resolution**: Output resolution, live resolution switching, fullscreen, present mode, HDR, ultrawide HUD position.
+2. **Upscaling and Temporal Reconstruction**: Upscaler selection, FSR 4 warning, quality preset, FSR 4 assets, object motion vectors.
+3. **Image Quality and Sharpening**: RCAS sharpening toggle and strength, model LOD, in-game post-processing effects.
+4. **Compatibility and GPU Pipeline**: Two-stage GPU pipeline, readbacks, game enhancements, and tweaks.
+5. **Performance Diagnostics**: In-engine FPS counter, frame rate limiter, MangoHud, frame statistics, and GPU profiler.
 
 ---
 
@@ -190,12 +206,14 @@ Run all validation test suites:
 # 1. Native C/C++ engine, Vulkan, and math tests:
 ./build.sh --test
 
-# 2. Python launcher, network, mod, and patch tests:
+# 2. Python launcher, network, mod, and patch tests (369 tests, 48 skipped, 0 failures):
 python3 -m unittest discover tests
 ```
 
 - **Linux Launcher Tests** ([`tests/test_launcher_linux.py`](tests/test_launcher_linux.py)):
   Validates GTK4/Adw row generation, XDG path resolution, INI roundtrips, atomic writes, control scheme switching, FSR support probing, internal resolution calculations, and UI subtitle updates.
+- **Supervisor & Restart Tests** ([`tests/test_run_settings.py`](tests/test_run_settings.py)):
+  Validates supervisor handling of exit code `85`, argument and environment preservation, single-restart bounding, and normal exit isolation.
 - **Scene Resolution & Upscaler Fallback Tests** ([`tests/test_scene_resolution.cpp`](tests/test_scene_resolution.cpp), [`tests/test_upscaler_support.cpp`](tests/test_upscaler_support.cpp)):
   Validates Vulkan target proxies, stencil preservation, downscaling math, and dynamic FSR/DLSS device fallbacks on Vulkan (runs headlessly via Lavapipe).
 
