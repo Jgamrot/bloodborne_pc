@@ -200,6 +200,11 @@ void ConfigureUpscalerSupport(bool fsr4, bool fsr411) {
     }
 }
 
+bool Fsr4ImplementationNeededForRecord(int active_upscaler, bool supported, bool failed,
+                                       bool have_implementation) {
+    return IsFsr4(active_upscaler) && supported && !failed && !have_implementation;
+}
+
 void ConfigureObjectMotionSupport(bool supported, const char* problem) {
     auto& v = Get();
     static std::string kept;

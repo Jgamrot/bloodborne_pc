@@ -285,7 +285,11 @@ bool TemporalUpscaler::OnFrameStart() {
                 BbSettings::Get().output_res.store(output);
             }
             if (fields == 3 && provider >= 0 && provider < BbSettings::UpscalerCount) {
+                // Same state as the in-game menu's bbgpu_setting_set: the requested and active
+                // providers change together, and an old fallback reason no longer applies.
                 BbSettings::Get().upscaler.store(provider);
+                BbSettings::Get().active_upscaler.store(provider);
+                BbSettings::Get().upscaler_fallback_reason = nullptr;
             }
             std::fclose(f);
         }
@@ -297,7 +301,9 @@ bool TemporalUpscaler::OnFrameStart() {
     if (applied_preset != preset || settings.upscaler == BbSettings::UpscalerOff) failed = false;
     const bool active = Active();
     const bool jitter_on = active && settings.jitter && !BbToggle::Disabled(1u << 25);
-    const int upscaler = settings.upscaler.load();
+    // The implementation follows the provider that passed capability checks; `upscaler` keeps
+    // the user's requested value for the menu and the fallback report.
+    const int upscaler = settings.active_upscaler.load();
     const int output = BbSettings::AspectNeedsRestart() ? settings.startup_output_res : settings.output_res.load();
     const bool output_changed = !scaled_session && applied_output != output;
     if (output_changed) {
@@ -313,7 +319,7 @@ bool TemporalUpscaler::OnFrameStart() {
         // A failed provider keeps a fatal flag internally; a user retry gets a fresh context.
         scheduler.Finish();
         if (BbSettings::IsFsr4(upscaler)) {
-            fsr4 = std::make_unique<Fsr4Upscaler>(instance, scheduler);
+            EnsureFsr4();
             BbSettings::Get().fsr4_problem = nullptr;
         } else {
             fsr4.reset();
@@ -1015,7 +1021,10 @@ bool TemporalUpscaler::RecordReactive(vk::ImageView color_view) {
 
 void TemporalUpscaler::LogUpscalerState(const char* context, u32 w, u32 h, u32 ow, u32 oh) {
     const auto& settings = BbSettings::Get();
-    const int upscaler_idx = settings.upscaler.load();
+    // The requested provider is what the menu/ini holds; the active one is what runs (they
+    // differ after a capability fallback). Never report a fallback as the active upscaler.
+    const int requested_idx = settings.upscaler.load();
+    const int upscaler_idx = settings.active_upscaler.load();
     const int preset_idx = BbSettings::RenderPreset();
     const bool sharpen_active = settings.sharpen.load();
     const float raw_sharpness = settings.sharpness.load();
@@ -1028,21 +1037,33 @@ void TemporalUpscaler::LogUpscalerState(const char* context, u32 w, u32 h, u32 o
         }
     }
     static int last_logged_upscaler = -1;
+    static int last_logged_requested = -1;
     static int last_logged_preset = -1;
     static u32 last_logged_w = 0, last_logged_h = 0, last_logged_ow = 0, last_logged_oh = 0;
     static int last_logged_sharpen = -1;
     static float last_logged_sharpness = -1.0f;
-    if (last_logged_upscaler != upscaler_idx || last_logged_preset != preset_idx ||
+    if (last_logged_upscaler != upscaler_idx || last_logged_requested != requested_idx ||
+        last_logged_preset != preset_idx ||
         last_logged_w != w || last_logged_h != h || last_logged_ow != ow || last_logged_oh != oh ||
         last_logged_sharpen != int(sharpen_active) || last_logged_sharpness != raw_sharpness) {
         last_logged_upscaler = upscaler_idx;
+        last_logged_requested = requested_idx;
         last_logged_preset = preset_idx;
         last_logged_w = w; last_logged_h = h;
         last_logged_ow = ow; last_logged_oh = oh;
         last_logged_sharpen = int(sharpen_active);
         last_logged_sharpness = raw_sharpness;
+        char provider[96];
+        if (upscaler_idx != requested_idx) {
+            std::snprintf(provider, sizeof(provider), "%s (fallback; requested %s)",
+                          BbSettings::UpscalerName(upscaler_idx),
+                          BbSettings::UpscalerName(requested_idx));
+        } else {
+            std::snprintf(provider, sizeof(provider), "%s",
+                          BbSettings::UpscalerName(upscaler_idx));
+        }
         std::printf("[Upscaler:%s] Active: %s, Render: %ux%u, Output: %ux%u, Preset: %s (scale: %.2f), Sharpen: %s (slider: %.2f, effective: %.2f)\n",
-                    context, BbSettings::UpscalerName(upscaler_idx), w, h, ow, oh,
+                    context, provider, w, h, ow, oh,
                     BbSettings::PresetName(preset_idx), BbSettings::PresetScale(preset_idx),
                     sharpen_active ? "ENABLED" : "DISABLED", raw_sharpness, effective_sharpness);
         std::fflush(stdout);
@@ -2155,9 +2176,40 @@ bool TemporalUpscaler::UseFsr4() const {
     return BbSettings::IsFsr4(selected) && supported && !fsr4_failed;
 }
 
+void TemporalUpscaler::EnsureFsr4() {
+    if (fsr4) {
+        return;
+    }
+    const int selected = BbSettings::Get().active_upscaler.load();
+    const bool supported = selected == BbSettings::UpscalerFsr411
+                               ? instance.IsFsr411Supported()
+                               : instance.IsFsr4Int8Supported();
+    if (!BbSettings::Fsr4ImplementationNeededForRecord(selected, supported, fsr4_failed,
+                                                       fsr4 != nullptr)) {
+        return; // RecordFsr4 reports the fallback instead of creating a provider that cannot run
+    }
+    fsr4 = std::make_unique<Fsr4Upscaler>(instance, scheduler);
+    fsr4_failed = false;
+    reset = true;
+}
+
 bool TemporalUpscaler::RecordFsr4(vk::CommandBuffer cmdbuf, Fsr4Upscaler::Image color,
                                   Fsr4Upscaler::Image depth, u32 w, u32 h, u32 ow, u32 oh,
                                   float frame_ms) {
+    // The menu updates the active provider immediately, but OnFrameStart (which releases the
+    // implementation for a non-FSR4 provider) may not have run since. Never record through a
+    // null implementation: create it here, then fall back coherently if it still is not usable.
+    EnsureFsr4();
+    if (!fsr4) {
+        static constexpr char reason[] =
+            "FSR 4 implementation unavailable; using FSR 3.1 fallback";
+        BbSettings::Get().fsr4_problem = reason;
+        BbSettings::Get().active_upscaler = BbSettings::UpscalerFsr3;
+        BbSettings::Get().upscaler_fallback_reason = reason;
+        fsr4_failed = true;
+        reset = true;
+        return false;
+    }
     const auto& settings = BbSettings::Get();
     // Same jitter convention as FSR 3; the menu (or toggle 1 << 26) flips it for tests.
     const float sign =

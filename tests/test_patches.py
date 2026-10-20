@@ -199,6 +199,39 @@ class SprintFixTests(unittest.TestCase):
             self.assertFalse(sprint_fix_enabled({'sprint_fix': '1'}))
 
 
+class EffectPatchTests(unittest.TestCase):
+    EFFECTS_OFF = {
+        'effect_chromatic_aberration': '0', 'effect_dof': '0', 'effect_motion_blur': '0',
+        'effect_ssao': '0', 'effect_game_aa': '0', 'effect_dynamic_shadows': '0',
+    }
+
+    def test_disabled_effects_select_the_constructor_flag_patches(self):
+        names = effect_patches(self.EFFECTS_OFF)
+        expected = {
+            'Disable Dynamic Light Shadows (perf increase)': (0x026C2538 - EBOOT_BASE, b'\x00'),
+            'Disable SSAO': (0x026C2548 - EBOOT_BASE, b'\x00'),
+            'Disable Motion Blur (perf increase)': (0x026C2549 - EBOOT_BASE, b'\x00'),
+            'Disable AA': (0x026C254A - EBOOT_BASE, b'\x00'),
+            'Disable DoF': (0x025D7BBC - EBOOT_BASE, bytes.fromhex('E9DF00000090')),
+            'Disable Chromatic Aberration': (
+                0x0269FAA8 - EBOOT_BASE, bytes.fromhex('c783ac000000000000009090')),
+        }
+        for name, write in expected.items():
+            self.assertIn(name, names)
+            self.assertEqual(compile_patches(XML, [name], '01.09', SEGMENTS), [write])
+        # The effect flags share one constructor: the bytes must not overlap each other.
+        offsets = [offset for offset, _ in expected.values()]
+        self.assertEqual(len(offsets), len(set(offsets)))
+
+    def test_enabled_effects_do_not_select_the_disable_patches(self):
+        settings = {key: '1' for key in self.EFFECTS_OFF}
+        names = effect_patches(settings)
+        for name in ('Disable Dynamic Light Shadows (perf increase)', 'Disable SSAO',
+                     'Disable Motion Blur (perf increase)', 'Disable AA', 'Disable DoF',
+                     'Disable Chromatic Aberration'):
+            self.assertNotIn(name, names)
+
+
 class DebugPatchTests(unittest.TestCase):
     def test_camera_patch_is_optional_and_compatible_with_fps_and_debug_menu(self):
         self.assertEqual(effect_patches({'debug_camera': '0', 'debug_menu': '0'}), [])

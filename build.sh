@@ -115,4 +115,6 @@ if [[ ${1:-} == --test ]]; then
     out/engine-hooks-test
     ninja -C out/gpu frame-limiter-test
     out/gpu/frame-limiter-test
+    ninja -C out/gpu upscaler-support-test
+    out/gpu/upscaler-support-test
 fi

@@ -15,6 +15,11 @@ enum Upscaler : int { UpscalerOff = 0, UpscalerFsr3 = 1, UpscalerFsr4 = 2, Upsca
 inline bool IsFsr4(int upscaler) {
     return upscaler == UpscalerFsr4 || upscaler == UpscalerFsr411;
 }
+/// The dispatch path can run before OnFrameStart after the menu selects FSR 4, when the
+/// implementation was released for another provider: create it then. False when FSR 4 is not
+/// the active provider, the GPU cannot run it, it already failed fatally, or it exists already.
+bool Fsr4ImplementationNeededForRecord(int active_upscaler, bool supported, bool failed,
+                                       bool have_implementation);
 enum Preset : int { NativeAA = 0, Quality, Balanced, Performance, UltraPerformance, PresetCount };
 enum DebugView : int { DebugNone = 0, DebugReactive = 1, DebugMotion = 2, DebugViewCount };
 /// Frame generation (vk_frame_generation.h): frames generated between two of the game's.

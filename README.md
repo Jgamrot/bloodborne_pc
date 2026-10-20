@@ -154,9 +154,10 @@ To run all native C/C++ unit tests (allocator, memory, pad, semaphores, frame li
 ### 2. Launch the Native Launcher
 Launch the GTK4 launcher interface:
 ```bash
-./launcher/bb-launcher.sh
+./run_launcher.sh
 ```
-Or directly via Python:
+This is a convenience wrapper for `./launcher/bb-launcher.sh`, which uses `nix-shell` when
+PyGObject, GTK 4 or libadwaita are not installed. Or directly via Python:
 ```bash
 python3 launcher/bbport_launcher.py
 ```

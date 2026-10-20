@@ -185,6 +185,10 @@ private:
     bool RecordDlss(vk::CommandBuffer cmdbuf, const Dlss::Resource& color,
                     const Dlss::Resource& depth, u32 w, u32 h, u32 ow, u32 oh, float frame_ms,
                     bool hdr);
+    /// Creates the FSR 4 implementation if the active provider needs it. The menu can select
+    /// FSR 4 between display passes, after it was released for another provider: the dispatch
+    /// path must not dereference a null implementation before OnFrameStart runs.
+    void EnsureFsr4();
     /// Records FSR 4 into output_image; on a permanent failure FSR 3 takes over.
     bool RecordFsr4(vk::CommandBuffer cmdbuf, Fsr4Upscaler::Image color, Fsr4Upscaler::Image depth,
                     u32 w, u32 h, u32 ow, u32 oh, float frame_ms);

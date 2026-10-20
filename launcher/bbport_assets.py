@@ -156,7 +156,7 @@ def canonical_control_scheme(value: str | None, default: str = "xbox") -> str:
     if not value or not isinstance(value, str):
         return default
     v = value.strip().lower()
-    if v in ("pc", "keyboard", "kb", "kbm", "mouse", "keyboard & mouse", "pc — keyboard & mouse", "пк — клавиатура и мышь"):
+    if v in ("pc", "keyboard", "kb", "kbm", "mouse", "keyboard & mouse", "keyboard and mouse", "pc — keyboard & mouse", "pc — keyboard and mouse", "пк — клавиатура и мышь"):
         return "pc"
     if v in ("xbox", "xinput", "xbox controller", "геймпад xbox"):
         return "xbox"

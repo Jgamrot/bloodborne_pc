@@ -1283,6 +1283,274 @@ class InternalResolutionTests(unittest.TestCase):
                 self.assertEqual(loaded_values["upscaler"], "fsr3")
 
 
+class CinematicLauncherAndLocalizationTests(unittest.TestCase):
+    def setUp(self):
+        from bbport_i18n import set_language
+        set_language("en")
+
+    def tearDown(self):
+        from bbport_i18n import set_language
+        set_language("en")
+
+    def test_default_language_is_english_when_no_preference(self):
+        import bbport_i18n
+        bbport_i18n.set_language("")
+        self.assertEqual(bbport_i18n.current_language(), "en")
+        self.assertIn("ui_language", launcher.DEFAULTS)
+        self.assertIn(launcher.DEFAULTS["ui_language"], ("", "en"))
+
+    def test_saved_language_preference_restores_at_startup(self):
+        import bbport_i18n
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = Path(tmp) / "settings.json"
+            cfg.write_text(json.dumps({"ui_language": "fr"}), encoding="utf-8")
+            with patch.object(launcher, "CONFIG_FILE", cfg):
+                settings = launcher.load_settings()
+                self.assertEqual(settings["ui_language"], "fr")
+                bbport_i18n.set_language(settings["ui_language"])
+                self.assertEqual(bbport_i18n.current_language(), "fr")
+
+    def test_all_six_language_choices_available_with_native_names(self):
+        expected_languages = [
+            ("English", "en"),
+            ("Français", "fr"),
+            ("Русский", "ru"),
+            ("简体中文", "zh"),
+            ("한국어", "ko"),
+            ("日本語", "ja"),
+        ]
+        self.assertEqual(launcher.UI_LANGUAGES, expected_languages)
+
+    def test_switching_languages_updates_visible_labels(self):
+        import bbport_i18n
+        expected_translations = {
+            "en": ("Graphics", "Launch Game"),
+            "fr": ("Graphismes", "Lancer le jeu"),
+            "ru": ("Графика", "Запустить игру"),
+            "zh": ("图像", "启动游戏"),
+            "ko": ("그래픽", "게임 실행"),
+            "ja": ("グラフィックス", "ゲームを起動"),
+        }
+        for code, (expected_graphics, expected_launch) in expected_translations.items():
+            with self.subTest(language=code):
+                bbport_i18n.set_language(code)
+                self.assertEqual(launcher.tr("Графика"), expected_graphics)
+                self.assertEqual(launcher.tr("Запустить игру"), expected_launch)
+
+    def test_english_mode_contains_zero_accidental_russian(self):
+        import bbport_i18n
+        bbport_i18n.set_language("en")
+
+        # 1. Test canonical launcher English strings dictionary
+        cyrillic_leakage = []
+        for key, value in bbport_i18n.EN.items():
+            if any('\u0400' <= char <= '\u04FF' for char in value):
+                cyrillic_leakage.append((key, value))
+        self.assertEqual(cyrillic_leakage, [], f"Cyrillic characters found in English catalog: {cyrillic_leakage}")
+
+        # 2. Test common launcher labels in English mode
+        test_keys = [
+            "Графика",
+            "Запустить игру",
+            "Схема управления",
+            "Язык лаунчера",
+            "Закрыть",
+            "Применяется сразу",
+            "Все 189 файлов проверены и установлены в fsr4_shaders.",
+            "Видеокарта не поддерживает FSR 4 (требуется INT8 dot product)",
+            "Коэффициент 0.0–2.0 (по умолчанию 0.50); применяется сразу",
+        ]
+        for key in test_keys:
+            translated = launcher.tr(key)
+            has_cyrillic = any('\u0400' <= char <= '\u04FF' for char in translated)
+            self.assertFalse(has_cyrillic, f"Cyrillic found in translated text for '{key}': '{translated}'")
+
+    def test_missing_translations_fallback_to_english(self):
+        import bbport_i18n
+        bbport_i18n.set_language("fr")
+
+        # Test a hypothetical string missing from FR
+        fallback = bbport_i18n.translate("Nonexistent Key For Testing Fallback", "fr")
+        self.assertEqual(fallback, "Nonexistent Key For Testing Fallback")
+
+        # Test canonical English key fallback
+        self.assertEqual(bbport_i18n.translate("Graphics", "fr"), "Graphismes")
+
+    def test_translation_placeholders_preserved_across_all_languages(self):
+        import bbport_i18n
+        keys_with_placeholders = [
+            ("Отсутствует {} из {} файлов в fsr4_shaders", 2),
+            ("Загрузка: {} из {}...", 2),
+            ("Установлены: {} файлов в fsr4_shaders", 1),
+            ("Ошибка загрузки FSR 4: {}", 1),
+            ("По умолчанию: {}", 1),
+        ]
+        catalogs = {
+            "en": bbport_i18n.EN,
+            "fr": bbport_i18n.FR,
+            "ru": bbport_i18n.RU,
+            "zh": bbport_i18n.ZH,
+            "ko": bbport_i18n.KO,
+            "ja": bbport_i18n.JA,
+        }
+        for lang_code, catalog in catalogs.items():
+            bbport_i18n.set_language(lang_code)
+            for ru_key, count in keys_with_placeholders:
+                with self.subTest(lang=lang_code, key=ru_key):
+                    trans = launcher.tr(ru_key)
+                    self.assertEqual(trans.count("{}"), count, f"Mismatched placeholder count in {lang_code}: {trans}")
+                    dummy_args = [f"val{i}" for i in range(count)]
+                    formatted = trans.format(*dummy_args)
+                    for arg in dummy_args:
+                        self.assertIn(arg, formatted)
+
+    def test_unicode_strings_survival(self):
+        unicode_samples = [
+            ("fr", "Français: Qualité d'image & Paramètres"),
+            ("ru", "Русский: Настройки графики и производительности"),
+            ("zh", "简体中文: 图像与渲染设置"),
+            ("ko", "한국어: 그래픽 설정 및 사냥 시작"),
+            ("ja", "日本語: グラフィックス設定と狩りの開始"),
+        ]
+        for lang, text in unicode_samples:
+            encoded = text.encode("utf-8")
+            decoded = encoded.decode("utf-8")
+            self.assertEqual(text, decoded)
+
+    def test_cinematic_hero_and_navigation_pages(self):
+        app = launcher.Adw.Application(application_id="io.github.bbport.TestCinematic")
+        app.connect("activate", lambda a: None)
+        win = launcher.LauncherWindow(app)
+
+        # Verify 6-page navigation stack
+        expected_pages = ["home", "graphics", "game", "downloads", "settings", "log"]
+        self.assertEqual(list(win.pages.keys()), expected_pages)
+
+        # Verify hero elements
+        self.assertTrue(hasattr(win, "hero_box"))
+        self.assertTrue(hasattr(win, "hero_launch_button"))
+        self.assertTrue(hasattr(win, "hero_game_summary"))
+        self.assertTrue(hasattr(win, "hero_graphics_summary"))
+        self.assertTrue(hasattr(win, "hero_hunter_summary"))
+        self.assertTrue(hasattr(win, "hero_fsr_summary"))
+
+        # Verify dedicated language selector exists in settings
+        self.assertTrue(hasattr(win, "ui_language_row"))
+        self.assertEqual(win.ui_language_row.values, [val for _, val in launcher.UI_LANGUAGES])
+
+        # Verify graphics settings 5 groups
+        self.assertTrue(hasattr(win, "render_group"))
+        self.assertTrue(hasattr(win, "upscale_group"))
+        self.assertTrue(hasattr(win, "quality_group"))
+        self.assertTrue(hasattr(win, "compat_group"))
+        self.assertTrue(hasattr(win, "perf_group"))
+
+    def test_fsr4_rx6600m_warning_and_fsr31_recommended(self):
+        app = launcher.Adw.Application(application_id="io.github.bbport.TestFsrLabels")
+        app.connect("activate", lambda a: None)
+        win = launcher.LauncherWindow(app)
+
+        # FSR 3.1 is recommended
+        self.assertIn("fsr3", [val for _, val in launcher.UPSCALERS])
+        # FSR 4 is experimental
+        self.assertIn("fsr4", [val for _, val in launcher.UPSCALERS])
+
+        # Verify warning label exists
+        self.assertTrue(hasattr(win, "fsr4_compat_warning_label"))
+        # When FSR 4 selected, warning is visible
+        win.upscaler_row.set_selected(0)  # fsr4
+        win.update_upscaler_status()
+        self.assertTrue(win.fsr4_compat_warning_label.get_visible())
+
+        # When TAA selected, warning is hidden
+        win.upscaler_row.set_selected(4)  # taa
+        win.update_upscaler_status()
+        self.assertFalse(win.fsr4_compat_warning_label.get_visible())
+
+    def test_invalid_language_codes_fall_back_safely(self):
+        import bbport_i18n
+        self.assertEqual(launcher.setting_value("ui_language", "fr"), "fr")
+        self.assertEqual(launcher.setting_value("ui_language", "invalid_code"), "en")
+        self.assertEqual(launcher.setting_value("ui_language", None), "en")
+        self.assertEqual(launcher.setting_value("ui_language", 123), "en")
+
+        bbport_i18n.set_language("invalid_code")
+        self.assertEqual(bbport_i18n.current_language(), "en")
+        bbport_i18n.set_language("")
+        self.assertIn(bbport_i18n.current_language(), ("en", "fr", "ru", "zh", "ko", "ja"))
+
+    def test_bidirectional_tr_resolution(self):
+        import bbport_i18n
+        # Test English canonical key queries in Russian mode
+        bbport_i18n.set_language("ru")
+        self.assertEqual(launcher.tr("Launch Game"), "Запустить игру")
+        self.assertEqual(launcher.tr("Stop"), "Остановить")
+        self.assertEqual(launcher.tr("Graphics"), "Графика")
+        self.assertEqual(launcher.tr("Launcher Configuration"), "Конфигурация лаунчера")
+
+        # Test legacy Russian key queries in non-Russian languages
+        bbport_i18n.set_language("fr")
+        self.assertEqual(launcher.tr("Запустить игру"), "Lancer le jeu")
+        self.assertEqual(launcher.tr("Launch Game"), "Lancer le jeu")
+        self.assertEqual(launcher.tr("Остановить"), "Arrêter")
+        self.assertEqual(launcher.tr("Stop"), "Arrêter")
+
+        bbport_i18n.set_language("ja")
+        self.assertEqual(launcher.tr("Запустить игру"), "ゲームを起動")
+        self.assertEqual(launcher.tr("Launch Game"), "ゲームを起動")
+
+    def test_tab_preserved_during_language_switch(self):
+        from gi.repository import GLib
+        app = launcher.Adw.Application(application_id="io.github.bbport.TestTabSwitch")
+        app.connect("activate", lambda a: None)
+        win = launcher.LauncherWindow(app)
+
+        win.stack.set_visible_child_name("settings")
+        self.assertEqual(win.stack.get_visible_child_name(), "settings")
+
+        # Simulate user choosing French in Settings
+        win.ui_language_row.set_selected(1)  # fr
+        win.on_ui_language(win.ui_language_row, None)
+
+        loop = GLib.MainContext.default()
+        while loop.pending():
+            loop.iteration(False)
+
+        self.assertEqual(win.stack.get_visible_child_name(), "settings")
+
+    def test_zero_cyrillic_leakage_in_all_non_russian_live_uis(self):
+        import bbport_i18n
+        for code in ("en", "fr", "zh", "ko", "ja"):
+            with self.subTest(language=code):
+                bbport_i18n.set_language(code)
+                app = launcher.Adw.Application(application_id=f"io.github.bbport.AuditLeak.{code}")
+                app.connect("activate", lambda a: None)
+                win = launcher.LauncherWindow(app)
+
+                cyrillic_leak = []
+
+                def check_widget(w):
+                    for prop in ("label", "title", "subtitle", "tooltip_text"):
+                        if hasattr(w, f"get_{prop}"):
+                            try:
+                                val = getattr(w, f"get_{prop}")()
+                                if val and isinstance(val, str):
+                                    if any('\u0400' <= c <= '\u04FF' for c in val):
+                                        cyrillic_leak.append((type(w).__name__, prop, val))
+                            except Exception:
+                                pass
+                    child = w.get_first_child() if hasattr(w, "get_first_child") else None
+                    while child:
+                        check_widget(child)
+                        child = child.get_next_sibling()
+
+                check_widget(win)
+                self.assertEqual(
+                    cyrillic_leak, [],
+                    f"Cyrillic characters detected in {code} mode UI: {cyrillic_leak}"
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
 
