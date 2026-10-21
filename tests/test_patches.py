@@ -417,3 +417,63 @@ class GameVersionTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class MalformedSettingsTests(unittest.TestCase):
+    def test_malformed_preset_does_not_crash(self):
+        self.assertIsNone(render_size({'upscaler': 'fsr3', 'preset': 'quality'}))
+        self.assertEqual(scaled_sizes({'upscaler': 'fsr3', 'preset': 'quality',
+                                       'output_res': '3840x2160'}),
+                         ((3840, 2160), (3840, 2160)))
+
+    def test_malformed_render_override_falls_back_to_the_preset(self):
+        self.assertEqual(render_size({'upscaler': 'fsr3', 'preset': '1'}, 'wide'), (1280, 720))
+        self.assertEqual(render_size({'upscaler': 'fsr3', 'preset': '1'}, '0x0'), (1280, 720))
+
+    def test_corrupt_patch_profile_uses_each_file_default(self):
+        found = [('extra.xml/On', ROOT / 'patches/Bloodborne.xml', {'isEnabled': 'true'})]
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / 'patches.json'
+            for text in ('{', '[1, 2]'):
+                with self.subTest(profile=text):
+                    config.write_text(text)
+                    self.assertEqual([key for key, _path, _meta in external_selection(found, config)],
+                                     ['extra.xml/On'])
+
+    def test_out_of_range_preset_clamps(self):
+        self.assertEqual(render_size({'upscaler': 'fsr3', 'preset': '99'}),
+                         render_size({'upscaler': 'fsr3', 'preset': '4'}))
+        self.assertEqual(render_size({'upscaler': 'fsr3', 'preset': '-3'}),
+                         render_size({'upscaler': 'fsr3', 'preset': '0'}))
+
+
+class EffectPatchTests(unittest.TestCase):
+    EFFECTS_OFF = {
+        'effect_chromatic_aberration': '0', 'effect_dof': '0', 'effect_motion_blur': '0',
+        'effect_ssao': '0', 'effect_game_aa': '0', 'effect_dynamic_shadows': '0',
+    }
+
+    def test_disabled_effects_select_the_constructor_flag_patches(self):
+        names = effect_patches(self.EFFECTS_OFF)
+        expected = {
+            'Disable Dynamic Light Shadows (perf increase)': (0x026C2538 - EBOOT_BASE, b'\x00'),
+            'Disable SSAO': (0x026C2548 - EBOOT_BASE, b'\x00'),
+            'Disable Motion Blur (perf increase)': (0x026C2549 - EBOOT_BASE, b'\x00'),
+            'Disable AA': (0x026C254A - EBOOT_BASE, b'\x00'),
+            'Disable DoF': (0x025D7BBC - EBOOT_BASE, bytes.fromhex('E9DF00000090')),
+            'Disable Chromatic Aberration': (
+                0x0269FAA8 - EBOOT_BASE, bytes.fromhex('c783ac000000000000009090')),
+        }
+        for name, write in expected.items():
+            self.assertIn(name, names)
+            self.assertEqual(compile_patches(XML, [name], '01.09', SEGMENTS), [write])
+        offsets = [offset for offset, _ in expected.values()]
+        self.assertEqual(len(offsets), len(set(offsets)))
+
+    def test_enabled_effects_do_not_select_the_disable_patches(self):
+        settings = {key: '1' for key in self.EFFECTS_OFF}
+        names = effect_patches(settings)
+        for name in ('Disable Dynamic Light Shadows (perf increase)', 'Disable SSAO',
+                     'Disable Motion Blur (perf increase)', 'Disable AA', 'Disable DoF',
+                     'Disable Chromatic Aberration'):
+            self.assertNotIn(name, names)

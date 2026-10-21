@@ -4,6 +4,19 @@ Windows releases of this fork, newest first. Each is on the
 [releases page](https://github.com/Jgamrot/bloodborne_pc/releases) as `bbport-windows.zip`.
 Planned work is in [ROADMAP.md](ROADMAP.md).
 
+## Unreleased
+
+- **Windows launcher rework:** a persistent named rail now separates Overview, Graphics,
+  Display, Game & saves, Mods & patches, Online, System and Diagnostics. All existing
+  settings, mod/patch controls, co-op/sign-in actions and setup steps remain available.
+- **Diagnostics page:** live process and exit state, runtime GPU/upscaler/presentation
+  report, paths, and a copy/save/clear session log with error/warning colouring.
+- **Wine page transitions:** the launcher selects Qt Quick's OpenGL backend only under
+  Wine/Proton, fixing page changes that previously waited for a resize or fullscreen
+  toggle. Native Windows keeps Direct3D 11.
+- **Regression coverage:** page/section mapping tests and updated Wine smoke-test
+  documentation; the existing launcher settings, renderer and packaging tests still pass; the full suite is 321 tests with the same two known host-only errors and 77 skips as the baseline.
+
 ## 1.9.7
 
 A full-screen map, frame generation, seamless co-op that hands out its bells, and fixes from

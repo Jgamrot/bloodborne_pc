@@ -59,6 +59,15 @@ class ModTests(unittest.TestCase):
         config.write_text(json.dumps({'order': ['B', 'A', 'deleted'], 'disabled': ['A']}))
         self.assertEqual(mods.selected(self.moddir, config), ['B', 'C'])
 
+    def test_corrupt_profile_falls_back_to_all_mods(self):
+        for name in ['A', 'B']:
+            self.mod(name)
+        config = self.root / 'mods.json'
+        for text in ('{', '[1, 2]'):
+            with self.subTest(profile=text):
+                config.write_text(text)
+                self.assertEqual(mods.selected(self.moddir, config), ['A', 'B'])
+
     def test_no_mod_returns_original_game(self):
         self.assertEqual(mods.build_overlay(self.game, self.root / 'out', []), self.game)
         self.assertFalse((self.root / 'out').exists())

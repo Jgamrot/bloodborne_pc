@@ -97,7 +97,15 @@ def selected(root, config):
     available = discover(root)
     if not config or not Path(config).is_file():
         return available
-    settings = json.loads(Path(config).read_text(encoding='utf-8'))
+    try:
+        settings = json.loads(Path(config).read_text(encoding='utf-8'))
+    except (OSError, ValueError) as error:
+        # A corrupt profile must not stop the game: use the default (every installed mod).
+        print(f'Mods: ignoring {config}: {error}', file=sys.stderr)
+        return available
+    if not isinstance(settings, dict):
+        print(f'Mods: ignoring {config}: the profile is not an object', file=sys.stderr)
+        return available
     disabled_names = settings.get('disabled', [])
     if not isinstance(disabled_names, list) or not all(isinstance(n, str) for n in disabled_names):
         raise ValueError('Disabled mods must be a list of folder names')
