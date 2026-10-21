@@ -1121,7 +1121,15 @@ void TextureCache::GarbageCollectImages() {
     // images is only for when VRAM itself is running out.
     u64 vram_critical = critical_gc_memory;
     if (instance.CanReportMemoryUsage()) {
-        total_used_memory = instance.GetDeviceMemoryUsage();
+        // This runs on every guest submission (hundreds per second), and each call asks the
+        // driver twice (getMemoryProperties2). Usage and budget move slowly: refresh once every
+        // 8 submissions instead of paying two driver calls plus a possible ioctl per submission.
+        static u64 memory_query = 0;
+        static u64 driver_budget_cached = 0;
+        if (total_used_memory == 0 || (memory_query++ & 7) == 0) {
+            total_used_memory = instance.GetDeviceMemoryUsage();
+            driver_budget_cached = instance.GetDeviceMemoryBudgetNow();
+        }
         // bbport: on integrated GPUs (Steam Deck) the usage covers system-memory heaps holding
         // much more than images (buffers backing guest memory), and the startup budget left
         // ~1 GB after its 8 GB system reserve: usage stayed above the critical mark, so the
@@ -1134,7 +1142,7 @@ void TextureCache::GarbageCollectImages() {
         }();
         // bbport: a set budget (the launcher's Video memory pressure target) never exceeds the
         // driver's own.
-        const u64 driver_budget = instance.GetDeviceMemoryBudgetNow();
+        const u64 driver_budget = driver_budget_cached;
         if (driver_budget != 0) {
             vram_critical = driver_budget / 100 * (instance.IsIntegrated() ? 95 : 90);
         }
@@ -1177,6 +1185,12 @@ void TextureCache::GarbageCollectImages() {
     }
     ReportMemory();
     if (total_used_memory < trigger_gc_memory) {
+        return;
+    }
+    // Between the trigger and the pressure mark nothing is evicted (only the idle rule applies),
+    // yet the LRU was walked on every submission. Check it once every 8 submissions there.
+    static u64 idle_scans = 0;
+    if (total_used_memory < pressure_gc_memory && (idle_scans++ & 7) != 0) {
         return;
     }
     static const u64 idle_seconds = [] {

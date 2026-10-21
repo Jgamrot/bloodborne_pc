@@ -41,6 +41,11 @@ public:
         return static_cast<bool>(pipeline);
     }
 
+    /// bbport: last display frame and scheduler tick this pipeline was returned for a draw.
+    /// The pipeline cache evicts entries unused for BB_PIPELINE_GC_MINUTES (default 10).
+    u64 last_used_epoch{};
+    u64 last_used_tick{};
+
     vk::PipelineLayout GetLayout() const noexcept {
         return *pipeline_layout;
     }

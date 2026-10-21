@@ -189,6 +189,14 @@ class SettingsTests(unittest.TestCase):
                 self.config_file.write_text(json.dumps({"fps_limit": raw}), encoding="utf-8")
                 self.assertEqual(launcher.load_settings()["fps_limit"], expected)
 
+    def test_frames_ahead_is_coerced_clamped_and_never_bool(self):
+        self.config_file.parent.mkdir(parents=True)
+        for raw, expected in ((2, 2), (0, 0), (99, 8), (-3, 0), (3.9, 3), (True, 1),
+                              ("2", 1), (1e999, 1)):
+            with self.subTest(raw=raw):
+                self.config_file.write_text(json.dumps({"frames_ahead": raw}), encoding="utf-8")
+                self.assertEqual(launcher.load_settings()["frames_ahead"], expected)
+
     def test_non_utf8_settings_file_does_not_crash(self):
         self.config_file.parent.mkdir(parents=True)
         self.config_file.write_bytes(b'{"fullscreen": true, "note": "\xff"}')
@@ -548,9 +556,9 @@ class GameEnvironmentTests(unittest.TestCase):
         self.assertEqual(env["BB_FULLSCREEN"], "0")
         self.assertEqual(env["BB_PRESENT_MODE"], "Mailbox")
         self.assertEqual(env["BB_FPS"], "uncap")
-        for key in ("BB_HDR", "BB_FPS_LIMIT", "BB_DRAW_PIPE", "BB_READBACKS", "MANGOHUD",
-                    "BB_FRAME_STATS", "BB_GPU_PROFILE", "BB_VK_VALIDATION", "BB_USER_NAME",
-                    "BB_DLC_DIR"):
+        for key in ("BB_HDR", "BB_FPS_LIMIT", "BB_FRAMES_AHEAD", "BB_DRAW_PIPE", "BB_READBACKS",
+                    "MANGOHUD", "BB_FRAME_STATS", "BB_GPU_PROFILE", "BB_VK_VALIDATION",
+                    "BB_USER_NAME", "BB_DLC_DIR"):
             with self.subTest(key=key):
                 self.assertNotIn(key, env)
 
@@ -591,6 +599,16 @@ class GameEnvironmentTests(unittest.TestCase):
         env = launcher.game_environment(self.settings(fps_mode="uncap", fps_limit=144))
         self.assertEqual(env["BB_FPS"], "uncap")
         self.assertEqual(env["BB_FPS_LIMIT"], "144")
+
+    def test_frames_ahead_propagation(self):
+        # 1 is the game's default and is not exported; 0 (unlimited) must be.
+        for value, expected in ((1, None), (0, "0"), (2, "2"), (8, "8")):
+            with self.subTest(value=value):
+                env = launcher.game_environment(self.settings(frames_ahead=value))
+                if expected is None:
+                    self.assertNotIn("BB_FRAMES_AHEAD", env)
+                else:
+                    self.assertEqual(env["BB_FRAMES_AHEAD"], expected)
 
 
     def test_custom_directories_are_expanded(self):

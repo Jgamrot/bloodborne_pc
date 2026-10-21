@@ -719,13 +719,22 @@ public:
     /// records directly (Record() included, so callers may mix both) until the next
     /// KickRecording() or submission.
     [[gnu::noinline]] vk::CommandBuffer CommandBuffer() {
-        if (recording_threaded && !direct_mode) {
+        if (recording_threaded && !direct_mode.load(std::memory_order_acquire)) {
             SyncRecording();
-            direct_mode = true;
+            direct_mode.store(true, std::memory_order_release);
             direct_recordings.fetch_add(1, std::memory_order_relaxed);
             TraceDirectRecording(__builtin_return_address(0));
         }
         return current_cmdbuf;
+    }
+
+    /// Records `func` on the calling thread immediately, even when threaded recording is on.
+    /// Use this instead of Record() when the closure refers to caller-owned data: Record() may
+    /// hand the closure to the recorder thread, where those references would dangle if the
+    /// recording mode changed after the caller checked IsRecordingDeferred().
+    template <typename Func>
+    void RecordNow(Func&& func) {
+        func(CommandBuffer());
     }
 
     /// BB_RECORDER_TRACE=1: prints the most frequent CommandBuffer() callers every 2000 calls.
@@ -735,34 +744,30 @@ public:
     /// everything it uses (capture by value): it may run later on the recording thread.
     template <typename Func>
     void Record(Func&& func) {
-        if (!recording_threaded || direct_mode) {
+        if (!recording_threaded || direct_mode.load(std::memory_order_acquire)) {
             func(current_cmdbuf);
             return;
         }
         if (BbToggle::Disabled(BbToggle::ThreadedRecording)) {
             SyncRecording();
-            direct_mode = true;
+            direct_mode.store(true, std::memory_order_release);
             func(current_cmdbuf);
             return;
         }
+        // Producers are not all on one thread: the draw pipe, the GPU command thread, guest
+        // memory faults and the copy pool can Record() here at the same time. The chunk's
+        // linked list and bump allocator are not thread-safe.
+        std::scoped_lock lk{record_mutex};
         if (!record_chunk->Push(std::forward<Func>(func))) {
-            RetireChunk();
+            RetireChunkLocked();
             const bool pushed = record_chunk->Push(std::forward<Func>(func));
             ASSERT(pushed);
         }
     }
 
-    /// bbport: replaces the current chunk with a fresh one. The replacement is taken first, so
-    /// `record_chunk` is never null: code that re-enters the recording side (a guest memory
-    /// fault handled inline on this thread) used to find it null between the two steps.
-    void RetireChunk() {
-        auto next = AcquireChunk();
-        full_chunks.push_back(std::exchange(record_chunk, std::move(next)));
-    }
-
     /// True when Record() defers commands (and RecordData() copies into chunks).
     [[nodiscard]] bool IsRecordingDeferred() const noexcept {
-        return recording_threaded && !direct_mode &&
+        return recording_threaded && !direct_mode.load(std::memory_order_acquire) &&
                !BbToggle::Disabled(BbToggle::ThreadedRecording);
     }
 
@@ -772,9 +777,10 @@ public:
         if (!IsRecordingDeferred()) {
             return;
         }
+        std::scoped_lock lk{record_mutex};
         ASSERT(bytes + 1024 <= RecordChunk::Capacity);
         if (RecordChunk::Capacity - record_chunk->Size() < bytes + 1024) {
-            RetireChunk();
+            RetireChunkLocked();
         }
     }
 
@@ -786,9 +792,11 @@ public:
             return data;
         }
         // Room for the data and the command that follows it, so both stay in one chunk.
+        std::scoped_lock lk{record_mutex};
         const size_t bytes = data.size_bytes();
         ReserveRecordData(bytes + alignof(T));
         auto* dst = static_cast<T*>(record_chunk->Allocate(bytes, alignof(T)));
+        ASSERT(dst);
         std::memcpy(dst, data.data(), bytes);
         return {dst, data.size()};
     }
@@ -810,10 +818,17 @@ public:
     /// work anyway, so small copies cost no wakeup); WaitHostCopies() covers it.
     template <typename Func>
     void RecordHostCopy(Func&& copy) {
-        Record([copy = std::forward<Func>(copy), this,
-                seq = ++host_copies_issued](vk::CommandBuffer) {
+        const u64 seq = host_copies_issued.fetch_add(1, std::memory_order_relaxed) + 1;
+        Record([copy = std::forward<Func>(copy), this, seq](vk::CommandBuffer) {
             copy();
-            host_copies_done.store(seq, std::memory_order_release);
+            // Copies may finish out of issue order when one runs directly and another on the
+            // recorder thread. Never move the completed counter backwards: WaitHostCopies()
+            // would spin until an unrelated copy happened to push it forward again.
+            u64 done = host_copies_done.load(std::memory_order_relaxed);
+            while (done < seq &&
+                   !host_copies_done.compare_exchange_weak(done, seq, std::memory_order_release,
+                                                           std::memory_order_relaxed)) {
+            }
         });
     }
 
@@ -883,6 +898,15 @@ public:
 private:
     void AllocateWorkerCommandBuffers();
 
+    /// Replaces the current chunk with a fresh one (called with record_mutex held). The
+    /// replacement is taken first, so `record_chunk` is never null: code that re-enters the
+    /// recording side (a guest memory fault handled inline on this thread) used to find it null
+    /// between the two steps.
+    void RetireChunkLocked() {
+        auto next = AcquireChunk();
+        full_chunks.push_back(std::exchange(record_chunk, std::move(next)));
+    }
+
     std::unique_ptr<RecordChunk> AcquireChunk();
 
     void RecorderThread(std::stop_token stoken);
@@ -916,6 +940,10 @@ private:
     // bbport: threaded recording
     std::unique_ptr<RecordChunk> record_chunk;
     std::vector<std::unique_ptr<RecordChunk>> full_chunks;
+    /// Guards record_chunk/full_chunks on the producer side. Recursive: RecordData() reserves
+    /// and allocates through helpers that also take it. Lock order: record_mutex, then
+    /// recorder_mutex (never the reverse).
+    std::recursive_mutex record_mutex;
     std::mutex recorder_mutex;
     std::condition_variable_any recorder_cv;
     std::condition_variable_any recorder_idle_cv;
@@ -924,8 +952,11 @@ private:
     bool recorder_busy = false;
     std::atomic<size_t> queued_chunks{0}; ///< recorder_queue.size() for lock-free polling
     bool recorder_sleeping = false; ///< waiting on recorder_cv (guarded by recorder_mutex)
-    bool direct_mode = false; ///< the command buffer is recorded on the caller's thread
-    u64 host_copies_issued = 0;
+    /// The command buffer is recorded on the caller's thread. Written by CommandBuffer() and
+    /// KickRecording() from different threads, so it is atomic; the chunk handoff below still
+    /// assumes one direct recorder at a time.
+    std::atomic<bool> direct_mode{false};
+    std::atomic<u64> host_copies_issued{0};
     std::atomic<u64> host_copies_done{0};
     std::atomic<u64> deferred_signals_issued{0}; ///< by the thread recording (A or B)
     std::shared_ptr<std::atomic<u64>> deferred_signals_done =

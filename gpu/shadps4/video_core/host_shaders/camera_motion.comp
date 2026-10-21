@@ -43,16 +43,33 @@ void main() {
     // Clip z = zs * z + zo, w = z; depth = zs + zo / z (zo < 0, depth < zs in front).
     const bool sky = depth >= 1.0;
     const float denom = min(depth - proj.z, -1e-8);
-    const float z = sky ? 1.0 : proj.w / denom;
+    float z = sky ? 1.0 : proj.w / denom;
+    if (!sky && proj.z < 1.0) {
+        // With a finite far plane, depth at/behind it would feed a ~5e6 view position into the
+        // reprojection. Clamp to the far distance. An infinite far plane (zs = 1) has distant
+        // geometry past any such bound, and its motion is already scale-invariant.
+        const float far_z = proj.w / (1.0 - proj.z);
+        z = clamp(z, 0.0, far_z);
+    }
     // Clear depth is an infinite direction: rotate it with the camera, without translation.
     // A threshold below 1 incorrectly classified distant geometry as motionless sky.
     const vec4 view = vec4(ndc.x * z / proj.x, ndc.y * z / proj.y, z, sky ? 0.0 : 1.0);
     const vec3 prev_view =
         vec3(dot(reproject[0], view), dot(reproject[1], view), dot(reproject[2], view));
-    const vec2 prev_ndc =
-        vec2(prev_view.x * prev_proj.x, prev_view.y * prev_proj.y) / max(prev_view.z, 1e-4);
-    const vec2 prev_uv = vec2(prev_ndc.x * 0.5 + 0.5, 0.5 - prev_ndc.y * 0.5);
-    const vec2 motion = (prev_uv - scene_uv) * size;
+    // A point behind the previous camera has no previous screen position. Dividing by a tiny
+    // positive z (the old max(prev_view.z, 1e-4)) produced vectors thousands of pixels long;
+    // FSR dilates the nearest-depth vector over 3x3, so a single such pixel smeared a whole
+    // silhouette. Treat it as disoccluded: zero motion.
+    vec2 motion = vec2(0.0);
+    if (prev_view.z > 1e-4) {
+        const vec2 prev_ndc =
+            vec2(prev_view.x * prev_proj.x, prev_view.y * prev_proj.y) / prev_view.z;
+        // Beyond a few screens the reprojection is not meaningful either.
+        if (all(lessThan(abs(prev_ndc), vec2(4.0)))) {
+            const vec2 prev_uv = vec2(prev_ndc.x * 0.5 + 0.5, 0.5 - prev_ndc.y * 0.5);
+            motion = (prev_uv - scene_uv) * size;
+        }
+    }
 
 #ifdef DEBUG_OVERLAY
     const vec4 current = imageLoad(color_img, pixel);
@@ -96,6 +113,10 @@ void main() {
             !any(isinf(object_motion.rg))) {
             result = object_motion.rg;
         }
+    }
+    // Never hand FSR a NaN/Inf: the dilation spreads it over the neighbourhood.
+    if (any(isnan(result)) || any(isinf(result))) {
+        result = vec2(0.0);
     }
     imageStore(motion_img, pixel, vec4(result, 0.0, 0.0));
 #endif

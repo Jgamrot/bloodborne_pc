@@ -11,6 +11,7 @@ renderer's own dumps). Nothing is copied anywhere but the folder asked for.
   shader_code.py <game folder> <prepared eboot.elf> <output folder>
 """
 from pathlib import Path
+import shutil
 import struct
 import sys
 
@@ -61,8 +62,8 @@ def collect(game, eboot):
     return found
 
 
-def main():
-    game, eboot, out = sys.argv[1], sys.argv[2], Path(sys.argv[3])
+def extract(game, eboot, out):
+    out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     found = collect(game, eboot)
     for (shader_hash, copy), code in found.items():
@@ -70,5 +71,43 @@ def main():
     print(f'shader code: {len(found)} programs')
 
 
+def prebuild(game, eboot, out):
+    """Extract once, again only when the game files or this extractor changed.
+    Returns 0 on success; a damaged/missing eboot removes the partial output."""
+    out = Path(out)
+    sources = sorted((Path(game) / 'dvdroot_ps4' / 'shader').glob('*.shaderbnd*.dcx'))
+    sources += [Path(eboot), Path(__file__)]
+    stamp = '\n'.join(f'{p.name} {p.stat().st_size} {int(p.stat().st_mtime)}'
+                      for p in sources if p.is_file())
+    try:
+        current = (out / 'stamp.txt').read_text(encoding='utf-8') == stamp
+    except OSError:
+        current = False
+    if current:
+        return 0
+    shutil.rmtree(out, ignore_errors=True)
+    try:
+        found = collect(game, eboot)
+    except (OSError, FormatError, IndexError, struct.error) as error:
+        print(f'shader code: {error}', file=sys.stderr)
+        shutil.rmtree(out, ignore_errors=True)
+        return 1
+    out.mkdir(parents=True, exist_ok=True)
+    for (shader_hash, copy), code in found.items():
+        (out / f'{shader_hash:016x}{".copy" if copy else ""}.bin').write_bytes(code)
+    (out / 'stamp.txt').write_text(stamp, encoding='utf-8')
+    print(f'shader code: {len(found)} programs')
+    return 0
+
+
+def main(argv):
+    # --prebuild <game> <eboot.elf> <out>: the launcher's shader pre-build, re-run only when
+    # its inputs changed (the output folder's stamp).
+    if argv and argv[0] == '--prebuild':
+        return prebuild(argv[1], argv[2], argv[3])
+    extract(argv[0], argv[1], argv[2])
+    return 0
+
+
 if __name__ == '__main__':
-    main()
+    sys.exit(main(sys.argv[1:]))

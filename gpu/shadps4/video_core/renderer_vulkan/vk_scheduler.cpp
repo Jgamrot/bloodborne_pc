@@ -213,11 +213,13 @@ void Scheduler::WaitDeferredSignals() {
 }
 
 void Scheduler::WaitHostCopies() {
-    if (host_copies_done.load(std::memory_order_acquire) < host_copies_issued) {
+    if (host_copies_done.load(std::memory_order_acquire) <
+        host_copies_issued.load(std::memory_order_acquire)) {
         BbStats::WaitTimer timer{BbStats::host_copies_wait_ns};
         BbStats::host_copy_waits.fetch_add(1, std::memory_order_relaxed);
         KickRecording(true);
-        while (host_copies_done.load(std::memory_order_acquire) < host_copies_issued) {
+        while (host_copies_done.load(std::memory_order_acquire) <
+               host_copies_issued.load(std::memory_order_acquire)) {
             std::this_thread::yield();
         }
     }
@@ -230,7 +232,10 @@ void Scheduler::KickRecording(bool force) {
         return;
     }
     // Callers kick where nobody holds the raw command buffer: deferral resumes.
-    direct_mode = false;
+    direct_mode.store(false, std::memory_order_release);
+    // Serialize with Record()/RecordData(): the chunk being inspected or handed over must not
+    // be mutated by another producer at the same time.
+    std::scoped_lock record_lk{record_mutex};
     // Batches of tens of KiB keep the queue handoff cheap relative to the work it carries.
     if (!force && full_chunks.empty() && record_chunk->Size() < 32 * 1024) {
         return;
@@ -239,7 +244,7 @@ void Scheduler::KickRecording(bool force) {
         return;
     }
     // bbport: the replacement is taken before the current chunk is handed over, so record_chunk
-    // is never null (see RetireChunk). AcquireChunk() takes recorder_mutex itself.
+    // is never null (see RetireChunkLocked). AcquireChunk() takes recorder_mutex itself.
     std::unique_ptr<RecordChunk> next = record_chunk->Empty() ? nullptr : AcquireChunk();
     bool wake;
     {

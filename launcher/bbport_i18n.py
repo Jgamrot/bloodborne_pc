@@ -238,6 +238,9 @@ EN = {
     "Производительность": "Performance",
     "Двухстадийный конвейер GPU": "Two-stage GPU pipeline",
     "Быстрее на 20–30%; при нестабильности выключите": "20–30% faster; turn off if unstable",
+    "Кадров вперёд (конвейер GPU)": "Frames ahead (GPU pipeline)",
+    "На сколько кадров поток команд может опережать GPU: 1 — по умолчанию (стабильно), 0 — без ограничения, 2 и больше — больше перекрытия CPU/GPU ценой задержки":
+        "How many guest frames the command thread may run ahead of the GPU: 1 is the default (stable), 0 removes the limit, 2 or more overlaps CPU recording with GPU work at the cost of latency",
     "Авто (8+ потоков)": "Auto (8+ threads)",
     "Включён": "On",
     "Выключен (стабильнее)": "Off (more stable)",
@@ -620,6 +623,9 @@ FR = {
     "Performance": "Performances",
     "Two-stage GPU pipeline": "Pipeline GPU à deux étapes",
     "20–30% faster; turn off if unstable": "20–30% plus rapide ; désactiver en cas d'instabilité",
+    "Frames ahead (GPU pipeline)": "Images d'avance (pipeline GPU)",
+    "How many guest frames the command thread may run ahead of the GPU: 1 is the default (stable), 0 removes the limit, 2 or more overlaps CPU recording with GPU work at the cost of latency":
+        "Nombre d'images dont le thread de commandes peut devancer le GPU : 1 par défaut (stable), 0 supprime la limite, 2 ou plus améliore le recouvrement CPU/GPU au prix de la latence",
     "Auto (8+ threads)": "Auto (8+ threads)",
     "Off (more stable)": "Désactivé (plus stable)",
     "GPU data readbacks by the CPU": "Lectures directes des données GPU par le CPU",
@@ -964,6 +970,9 @@ RU = {
     "Performance": "Производительность",
     "Two-stage GPU pipeline": "Двухстадийный конвейер GPU",
     "20–30% faster; turn off if unstable": "Быстрее на 20–30%; при нестабильности выключите",
+    "Frames ahead (GPU pipeline)": "Кадров вперёд (конвейер GPU)",
+    "How many guest frames the command thread may run ahead of the GPU: 1 is the default (stable), 0 removes the limit, 2 or more overlaps CPU recording with GPU work at the cost of latency":
+        "На сколько кадров поток команд может опережать GPU: 1 — по умолчанию (стабильно), 0 — без ограничения, 2 и больше — больше перекрытия CPU/GPU ценой задержки",
     "Auto (8+ threads)": "Авто (8+ потоков)",
     "Off (more stable)": "Выключен (стабильнее)",
     "GPU data readbacks by the CPU": "Чтение данных GPU процессором",
@@ -1308,6 +1317,9 @@ ZH = {
     "Performance": "性能",
     "Two-stage GPU pipeline": "双阶段 GPU 管线",
     "20–30% faster; turn off if unstable": "提升 20–30% 性能；不稳定时请关闭",
+    "Frames ahead (GPU pipeline)": "提前帧数（GPU 管线）",
+    "How many guest frames the command thread may run ahead of the GPU: 1 is the default (stable), 0 removes the limit, 2 or more overlaps CPU recording with GPU work at the cost of latency":
+        "命令线程可领先 GPU 的帧数：1 为默认值（稳定），0 表示不限制，2 及以上可让 CPU 录制与 GPU 工作更多地重叠，但会增加延迟",
     "Auto (8+ threads)": "自动（8+ 线程）",
     "Off (more stable)": "关闭（更稳定）",
     "GPU data readbacks by the CPU": "CPU 读取 GPU 数据回读",
@@ -1651,6 +1663,9 @@ KO = {
     "Performance": "성능",
     "Two-stage GPU pipeline": "2단계 GPU 파이프라인",
     "20–30% faster; turn off if unstable": "20–30% 더 빠름; 불안정할 경우 끄기",
+    "Frames ahead (GPU pipeline)": "선행 프레임 (GPU 파이프라인)",
+    "How many guest frames the command thread may run ahead of the GPU: 1 is the default (stable), 0 removes the limit, 2 or more overlaps CPU recording with GPU work at the cost of latency":
+        "명령 스레드가 GPU보다 앞서 실행할 수 있는 프레임 수: 1이 기본값(안정적), 0은 제한 없음, 2 이상은 지연을 대가로 CPU 기록과 GPU 작업을 더 겹칩니다",
     "Auto (8+ threads)": "자동 (8+ 스레드)",
     "Off (more stable)": "꺼짐 (더 안정적)",
     "GPU data readbacks by the CPU": "CPU에 의한 GPU 데이터 리드백",
@@ -1993,6 +2008,9 @@ JA = {
     "Performance": "パフォーマンス",
     "Two-stage GPU pipeline": "2ステージGPUパイプライン",
     "20–30% faster; turn off if unstable": "20〜30% 高速化; 不安定な場合はオフ",
+    "Frames ahead (GPU pipeline)": "先行フレーム数 (GPUパイプライン)",
+    "How many guest frames the command thread may run ahead of the GPU: 1 is the default (stable), 0 removes the limit, 2 or more overlaps CPU recording with GPU work at the cost of latency":
+        "コマンドスレッドがGPUより先行できるフレーム数: 1が既定値(安定)、0は無制限、2以上は遅延と引き換えにCPU記録とGPU処理の重なりを増やします",
     "Auto (8+ threads)": "自動 (8スレッド以上)",
     "Off (more stable)": "オフ (安定)",
     "GPU data readbacks by the CPU": "CPUによるGPUデータ読み戻し",

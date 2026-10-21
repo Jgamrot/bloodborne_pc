@@ -84,9 +84,17 @@ struct Values {
     std::atomic<bool> jitter{true};
     std::atomic<bool> reactive{false};
     std::atomic<bool> object_motion{true};
-    /// False where the renderer refuses object motion (AMD before RDNA3); the menu and the
-    /// config cannot enable it then. BB_OBJECT_MOTION=1 keeps the diagnostic override.
+    /// True when object_motion came from bbport.ini or BB_OBJECT_MOTION, not the default. Lets
+    /// an explicit opt-in run the path on GPUs where it is disabled by default (AMD before
+    /// RDNA3); the setting is still reported as a restart-to-apply change.
+    std::atomic<bool> object_motion_explicit{false};
+    /// False where the renderer refuses object motion (AMD before RDNA3) unless the user opted
+    /// in explicitly. BB_OBJECT_MOTION=1 keeps the diagnostic override.
     std::atomic<bool> object_motion_supported{true};
+    /// True when the refusal is the AMD-before-RDNA3 driver risk, which an explicit
+    /// object_motion=1 may override after a restart. Hard failures (missing device feature,
+    /// allocation failure) leave it false so the setting cannot be enabled.
+    std::atomic<bool> object_motion_opt_in_allowed{false};
     std::atomic<const char*> object_motion_problem{nullptr};
     std::atomic<float> reactive_scale{1.0f};
     std::atomic<float> reactive_threshold{0.2f};
@@ -160,7 +168,10 @@ void Load();
 /// Checks the loaded choice before the first frame; unsupported FSR 4 uses FSR 3.1.
 void ConfigureUpscalerSupport(bool fsr4, bool fsr411);
 /// The renderer's object-motion availability: clears the setting where it is refused.
-void ConfigureObjectMotionSupport(bool supported, const char* problem);
+/// `opt_in_allowed` marks the AMD-before-RDNA3 driver risk, which an explicit
+/// object_motion=1 may override after a restart; hard failures keep it false.
+void ConfigureObjectMotionSupport(bool supported, const char* problem,
+                                  bool opt_in_allowed = false);
 /// After device creation: DLSS availability; a DLSS setting falls back to FSR 3.1 without it.
 void ConfigureDlssSupport(bool available, const char* problem);
 /// Startup-patched scene dimensions cannot change until run.sh prepares a new image.

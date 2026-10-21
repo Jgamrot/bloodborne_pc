@@ -40,7 +40,10 @@ void Pipeline::BindResources(DescriptorWrites& set_writes,
 
     if (uses_push_descriptors) {
         if (!scheduler.IsRecordingDeferred()) {
-            scheduler.Record([&](vk::CommandBuffer cmdbuf) {
+            // RecordNow executes on this thread, so the reference to set_writes stays valid for
+            // the whole call. Record() could still defer the closure if another thread changed
+            // the recording mode after the check, leaving a dangling vector behind.
+            scheduler.RecordNow([&set_writes, bind_point, layout](vk::CommandBuffer cmdbuf) {
                 cmdbuf.pushDescriptorSetKHR(bind_point, layout, 0, set_writes);
             });
             return;

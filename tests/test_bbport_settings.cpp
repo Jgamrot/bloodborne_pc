@@ -71,6 +71,30 @@ int main() {
         assert(text.find("object_motion=0") != std::string::npos);
     }
 
+    // AMD RDNA 2 risk: the menu may write an explicit opt-in, which survives the next Load and
+    // is saved as 1 so the restart (when the renderer runs it) starts with object motion on.
+    ConfigureObjectMotionSupport(false, "AMD RDNA 2 risk", true);
+    assert(!Get().object_motion.load());
+    assert(ReadSetting("object_motion") == 0);
+    WriteIni(ini, "1");
+    Load();
+    assert(Get().object_motion.load());
+    assert(ReadSetting("object_motion") == 1);
+    Save();
+    {
+        std::ifstream file(ini);
+        std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        assert(text.find("object_motion=1") != std::string::npos);
+    }
+
+    // A hard refusal (missing device feature, allocation failure) still wins over the opt-in.
+    ConfigureObjectMotionSupport(false, "no vertex stores", false);
+    assert(!Get().object_motion.load());
+    WriteIni(ini, "1");
+    Load();
+    assert(!Get().object_motion.load());
+    assert(ReadSetting("object_motion") == 0);
+
     // Supported again: the value can be turned on.
     ConfigureObjectMotionSupport(true, nullptr);
     WriteIni(ini, "1");

@@ -206,6 +206,7 @@ DEFAULTS = {
     "present_mode": "Mailbox",
     "fps_mode": "uncap",
     "fps_limit": 0,
+    "frames_ahead": 1,
     "draw_pipe": "",
     "readbacks": "",
     "mangohud": False,
@@ -262,6 +263,12 @@ def setting_value(key, value):
         if not math.isfinite(value):
             return None
         return max(0, min(480, int(value)))
+    if key == "frames_ahead":
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        if not math.isfinite(value):
+            return None
+        return max(0, min(8, int(value)))
     return value
 
 
@@ -407,6 +414,10 @@ def game_environment(s):
     env["BB_FPS"] = s["fps_mode"]
     if s["fps_limit"] > 0:
         env["BB_FPS_LIMIT"] = str(s["fps_limit"])
+    # 1 is the game's default; only export a different overlap bound (0 = unlimited).
+    frames_ahead = int(s.get("frames_ahead", 1))
+    if frames_ahead != 1:
+        env["BB_FRAMES_AHEAD"] = str(frames_ahead)
     if s["draw_pipe"]:
         env["BB_DRAW_PIPE"] = s["draw_pipe"]
     if s["readbacks"]:
@@ -1330,6 +1341,14 @@ class LauncherWindow(Adw.ApplicationWindow):
         self.readbacks_row = combo_row(tr("Чтение данных GPU процессором"), None, READBACKS,
                                        self.settings["readbacks"])
         compat.add(self.readbacks_row)
+        self.frames_ahead_row = Adw.SpinRow.new_with_range(0, 8, 1)
+        self.frames_ahead_row.set_title(tr("Кадров вперёд (конвейер GPU)"))
+        self.frames_ahead_row.set_subtitle(tr(
+            "На сколько кадров поток команд может опережать GPU: 1 — по умолчанию "
+            "(стабильно), 0 — без ограничения, 2 и больше — больше перекрытия CPU/GPU "
+            "ценой задержки"))
+        self.frames_ahead_row.set_value(self.settings["frames_ahead"])
+        compat.add(self.frames_ahead_row)
         page.add(compat)
 
         # 5. Performance Diagnostics
@@ -2362,6 +2381,8 @@ class LauncherWindow(Adw.ApplicationWindow):
             s["draw_pipe"] = combo_value(self.pipe_row)
         if hasattr(self, "readbacks_row"):
             s["readbacks"] = combo_value(self.readbacks_row)
+        if hasattr(self, "frames_ahead_row"):
+            s["frames_ahead"] = int(self.frames_ahead_row.get_value())
         if hasattr(self, "mangohud_row"):
             s["mangohud"] = self.mangohud_row.get_active()
         if hasattr(self, "stats_row"):

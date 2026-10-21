@@ -700,11 +700,17 @@ void SettingsTab() {
     ImGui::EndDisabled();
     if (s.object_motion_supported) {
         Checkbox("Object motion vectors [Requires restart]", s.object_motion);
-        Hint("Generates velocity vectors for animated characters and weapons to eliminate motion ghosting. Costs ~10% FPS. Requires restart.");
+        const char* warning = s.object_motion_problem.load();
+        Hint(warning ? warning
+                     : "Generates velocity vectors for animated characters and weapons to "
+                       "eliminate motion ghosting. Costs ~10% FPS. Requires restart.");
     } else {
         const char* problem = s.object_motion_problem.load();
-        RowLabel("Object motion vectors (disabled on AMD RDNA 2)", Px(24.0f));
-        Hint(problem ? problem : "Disabled by default on AMD RX 6000-series due to driver device-loss crashes. Requires BB_OBJECT_MOTION=1 diagnostic override.");
+        RowLabel("Object motion vectors (disabled by default on AMD RDNA 2)", Px(24.0f));
+        Hint(problem ? problem
+                     : "Disabled by default on AMD RX 6000-series due to driver device-loss "
+                       "crashes. Set object_motion=1 in bbport.ini and restart (or "
+                       "BB_OBJECT_MOTION=1) to opt in.");
     }
     bool show_motion = s.debug_view == BbSettings::DebugMotion;
     if (Toggle("Show motion vectors (debug)", &show_motion)) {

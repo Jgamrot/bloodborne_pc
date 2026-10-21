@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -409,7 +410,11 @@ const GraphicsPipeline* PipelineCache::TryPreparedPipeline(const PreparedDraw& p
         }
     }
     const auto it = graphics_pipelines.find(prepared.key);
-    return it != graphics_pipelines.end() ? it->second.get() : nullptr;
+    if (it == graphics_pipelines.end()) {
+        return nullptr;
+    }
+    Touch(*it->second);
+    return it->second.get();
 }
 
 const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectParams params,
@@ -456,6 +461,7 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
         }
         sel.fetch_shader.reset();
     }
+    Touch(*it->second);
     return it->second.get();
 }
 
@@ -486,6 +492,7 @@ const ComputePipeline* PipelineCache::GetComputePipeline() {
             module_related_pipelines[m].emplace_back(compute_key);
         }
     }
+    Touch(*it->second);
     return it->second.get();
 }
 
@@ -973,6 +980,77 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
     }
     return std::make_tuple(&program->info, module,
                            program->modules[perm_idx].spec.fetch_shader_data, perm_hash);
+}
+
+void PipelineCache::Touch(Pipeline& pipeline) {
+    pipeline.last_used_epoch = frame_epoch;
+    pipeline.last_used_tick = scheduler.CurrentTick();
+}
+
+void PipelineCache::Tick() {
+    ++frame_epoch;
+    static const auto interval = std::chrono::minutes([] {
+        const char* env = std::getenv("BB_PIPELINE_GC_MINUTES");
+        return env ? std::max(0, std::atoi(env)) : 10;
+    }());
+    if (interval.count() == 0) {
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last_collection < interval) {
+        return;
+    }
+    last_collection = now;
+    CollectUnusedPipelines(int(interval.count()));
+}
+
+void PipelineCache::CollectUnusedPipelines(int minutes) {
+    // A pipeline is old when it was not returned for any draw during the previous interval.
+    const u64 cutoff = last_collection_epoch;
+    last_collection_epoch = frame_epoch;
+    u64 last_tick = 0;
+    std::vector<GraphicsPipelineKey> dead_graphics;
+    std::vector<ComputePipelineKey> dead_compute;
+    for (const auto& [key, pipeline] : graphics_pipelines) {
+        if (pipeline->last_used_epoch < cutoff) {
+            last_tick = std::max(last_tick, pipeline->last_used_tick);
+            dead_graphics.push_back(key);
+        }
+    }
+    for (const auto& [key, pipeline] : compute_pipelines) {
+        if (pipeline->last_used_epoch < cutoff) {
+            last_tick = std::max(last_tick, pipeline->last_used_tick);
+            dead_compute.push_back(key);
+        }
+    }
+    if (dead_graphics.empty() && dead_compute.empty()) {
+        return;
+    }
+    // The pipeline may still be referenced by a command buffer recorded at this tick.
+    if (last_tick != 0 && !scheduler.IsFree(last_tick)) {
+        return;
+    }
+    for (const auto& key : dead_graphics) {
+        graphics_pipelines.erase(key);
+    }
+    for (const auto& key : dead_compute) {
+        compute_pipelines.erase(key);
+    }
+    std::printf("Pipeline cache: released %zu graphics and %zu compute pipelines unused for %d "
+                "minutes\n",
+                dead_graphics.size(), dead_compute.size(), minutes);
+}
+
+void PipelineCache::ReportCache() {
+    std::shared_lock lk{programs_mutex};
+    size_t permutations = 0;
+    for (const auto& [_, program] : program_cache) {
+        permutations += program->modules.size();
+    }
+    std::printf("Pipeline cache: %zu programs, %zu permutations, %zu graphics pipelines, "
+                "%zu compute pipelines (%u new this session)\n",
+                program_cache.size(), permutations, graphics_pipelines.size(),
+                compute_pipelines.size(), num_new_pipelines);
 }
 
 std::optional<vk::ShaderModule> PipelineCache::ReplaceShader(vk::ShaderModule module,

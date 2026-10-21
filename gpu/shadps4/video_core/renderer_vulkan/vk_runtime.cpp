@@ -142,10 +142,19 @@ void Runtime::CopyBuffer(const VideoCore::Buffer* src, const VideoCore::Buffer* 
         FlushBarriers();
     }
 
-    scheduler.Record([src_handle = src->Handle(), dst_handle = dst->Handle(),
-                      regions = scheduler.RecordData(copies)](vk::CommandBuffer cmdbuf) {
+    // One mode read for RecordData() and the command: deferred data lives in the chunk, direct
+    // data is only valid while this call runs. See RecordNow().
+    const bool deferred = scheduler.IsRecordingDeferred();
+    const auto regions = scheduler.RecordData(copies);
+    const auto cmd = [src_handle = src->Handle(), dst_handle = dst->Handle(),
+                      regions](vk::CommandBuffer cmdbuf) {
         cmdbuf.copyBuffer(src_handle, dst_handle, regions.size(), regions.data());
-    });
+    };
+    if (deferred) {
+        scheduler.Record(cmd);
+    } else {
+        scheduler.RecordNow(cmd);
+    }
 
     if (bounded) {
         AccessBuffer(src, src_min, src_max - src_min, vk::PipelineStageFlagBits2::eCopy,
@@ -243,11 +252,18 @@ void Runtime::UploadImage(VideoCore::Image* dst, const VideoCore::Buffer* src,
         FlushBarriers();
     }
 
-    scheduler.Record([src_handle = src->Handle(), image = dst->GetImage(),
-                      regions = scheduler.RecordData(upload_copies)](vk::CommandBuffer cmdbuf) {
+    const bool deferred = scheduler.IsRecordingDeferred();
+    const auto regions = scheduler.RecordData(upload_copies);
+    const auto cmd = [src_handle = src->Handle(), image = dst->GetImage(),
+                      regions](vk::CommandBuffer cmdbuf) {
         cmdbuf.copyBufferToImage(src_handle, image, vk::ImageLayout::eTransferDstOptimal,
                                  regions.size(), regions.data());
-    });
+    };
+    if (deferred) {
+        scheduler.Record(cmd);
+    } else {
+        scheduler.RecordNow(cmd);
+    }
 
     for (const auto& copy : upload_copies) {
         const auto copy_size = BufferImageCopySize(copy, dst->info.pixel_format);
@@ -275,11 +291,18 @@ void Runtime::DownloadImage(VideoCore::Image* src, const VideoCore::Buffer* dst,
         FlushBarriers();
     }
 
-    scheduler.Record([image = src->GetImage(), buffer = dst->Handle(),
-                      regions = scheduler.RecordData(download_copies)](vk::CommandBuffer cmdbuf) {
+    const bool deferred = scheduler.IsRecordingDeferred();
+    const auto regions = scheduler.RecordData(download_copies);
+    const auto cmd = [image = src->GetImage(), buffer = dst->Handle(),
+                      regions](vk::CommandBuffer cmdbuf) {
         cmdbuf.copyImageToBuffer(image, vk::ImageLayout::eTransferSrcOptimal, buffer,
                                  regions.size(), regions.data());
-    });
+    };
+    if (deferred) {
+        scheduler.Record(cmd);
+    } else {
+        scheduler.RecordNow(cmd);
+    }
 
     for (const auto& copy : download_copies) {
         const auto copy_size = BufferImageCopySize(copy, src->info.pixel_format);
@@ -845,9 +868,11 @@ void Runtime::FlushBarriers() {
     }
 
     scheduler.EndRendering();
-    scheduler.Record([memory = memory_barrier, has_memory = dep_info.memoryBarrierCount != 0,
-                      images = scheduler.RecordData(std::span<const vk::ImageMemoryBarrier2>(
-                          image_barriers.data(), image_barriers.size()))](vk::CommandBuffer cmdbuf) {
+    const bool deferred = scheduler.IsRecordingDeferred();
+    const auto images = scheduler.RecordData(std::span<const vk::ImageMemoryBarrier2>(
+        image_barriers.data(), image_barriers.size()));
+    const auto cmd = [memory = memory_barrier, has_memory = dep_info.memoryBarrierCount != 0,
+                      images](vk::CommandBuffer cmdbuf) {
         const vk::DependencyInfo info = {
             .memoryBarrierCount = has_memory ? 1U : 0U,
             .pMemoryBarriers = has_memory ? &memory : nullptr,
@@ -855,7 +880,12 @@ void Runtime::FlushBarriers() {
             .pImageMemoryBarriers = images.data(),
         };
         cmdbuf.pipelineBarrier2(info);
-    });
+    };
+    if (deferred) {
+        scheduler.Record(cmd);
+    } else {
+        scheduler.RecordNow(cmd);
+    }
 
     memory_barrier.srcStageMask = vk::PipelineStageFlagBits2::eNone;
     memory_barrier.srcAccessMask = vk::AccessFlagBits2::eNone;

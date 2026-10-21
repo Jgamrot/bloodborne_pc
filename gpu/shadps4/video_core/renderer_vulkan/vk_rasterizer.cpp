@@ -1690,14 +1690,25 @@ void Rasterizer::EmitVertexBuffers() {
     auto& v = vertex_binds;
     const bool dynamic_input = instance.IsVertexInputDynamicState();
     const u32 num_buffers = v.num_buffers;
+    // One decision for both RecordData() and the command: when it says deferred, the data is
+    // copied into the chunk; otherwise the command runs on this thread while the source vectors
+    // are still valid. Reading IsRecordingDeferred() twice left a window for a dangling span.
+    const bool deferred = scheduler.IsRecordingDeferred();
+    const auto record = [deferred, this](auto&& cmd) {
+        if (deferred) {
+            scheduler.Record(cmd);
+        } else {
+            scheduler.RecordNow(cmd);
+        }
+    };
     scheduler.ReserveRecordData(
         v.bindings.size() * sizeof(v.bindings[0]) + v.attributes.size() * sizeof(v.attributes[0]) +
         num_buffers * (sizeof(vk::Buffer) + 3 * sizeof(vk::DeviceSize)) + 128);
     if (dynamic_input) {
-        scheduler.Record([bindings = scheduler.RecordData(std::span<const vk::VertexInputBindingDescription2EXT>{v.bindings.data(), v.bindings.size()}),
-                          attributes = scheduler.RecordData(std::span<const vk::VertexInputAttributeDescription2EXT>{
-                              v.attributes.data(), v.attributes.size()})](
-                             vk::CommandBuffer cmdbuf) {
+        const auto bindings = scheduler.RecordData(std::span<const vk::VertexInputBindingDescription2EXT>{v.bindings.data(), v.bindings.size()});
+        const auto attributes = scheduler.RecordData(std::span<const vk::VertexInputAttributeDescription2EXT>{
+            v.attributes.data(), v.attributes.size()});
+        record([bindings, attributes](vk::CommandBuffer cmdbuf) {
             cmdbuf.setVertexInputEXT(bindings, attributes);
         });
     }
@@ -1707,14 +1718,14 @@ void Rasterizer::EmitVertexBuffers() {
     const auto buffers = scheduler.RecordData(std::span<const vk::Buffer>{v.host_buffers.data(), num_buffers});
     const auto offsets = scheduler.RecordData(std::span<const vk::DeviceSize>{v.host_offsets.data(), num_buffers});
     if (dynamic_input) {
-        scheduler.Record([num_buffers, buffers, offsets](vk::CommandBuffer cmdbuf) {
+        record([num_buffers, buffers, offsets](vk::CommandBuffer cmdbuf) {
             cmdbuf.bindVertexBuffers(0, num_buffers, buffers.data(), offsets.data());
         });
         return;
     }
     const auto sizes = scheduler.RecordData(std::span<const vk::DeviceSize>{v.host_sizes.data(), num_buffers});
     const auto strides = scheduler.RecordData(std::span<const vk::DeviceSize>{v.host_strides.data(), num_buffers});
-    scheduler.Record([num_buffers, buffers, offsets, sizes, strides](vk::CommandBuffer cmdbuf) {
+    record([num_buffers, buffers, offsets, sizes, strides](vk::CommandBuffer cmdbuf) {
         cmdbuf.bindVertexBuffers2(0, num_buffers, buffers.data(), offsets.data(), sizes.data(),
                                   strides.data());
     });
@@ -3655,6 +3666,13 @@ void Rasterizer::NoteFrameStart() {
         profiler->BeginFrame();
     }
     const u64 frame = BbStats::gpu_frames.fetch_add(1, std::memory_order_relaxed) + 1;
+    // Age the compiled pipelines; once per BB_PIPELINE_GC_MINUTES (default 10) the cache
+    // releases those no draw returned during the previous interval.
+    pipeline_cache.Tick();
+    // BB_FRAME_STATS=1: every 600 frames, whether the compiled-object cache is still growing.
+    if (BbStats::enabled && (frame % 600) == 0) {
+        pipeline_cache.ReportCache();
+    }
     // BB_BUFFER_STATS=1: how many earlier frames the GPU has not finished when the GPU thread
     // starts a frame — the lag that decides whether guest memory can be read in place.
     static const bool stats = [] {

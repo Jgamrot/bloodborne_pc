@@ -162,20 +162,11 @@ def shader_prebuild(game, out, env):
     if env.get('BB_SHADER_PREBUILD') == '0':
         return
     code = out / 'shader_code'
-    sources = sorted((Path(game) / 'dvdroot_ps4' / 'shader').glob('*.shaderbnd*.dcx'))
-    sources.append(out / 'eboot.elf')
-    sources.append(PORT / 'scripts' / 'shader_code.py')
-    stamp = '\n'.join(f'{p.name} {p.stat().st_size} {int(p.stat().st_mtime)}' for p in sources if p.is_file())
-    try:
-        current = (code / 'stamp.txt').read_text(encoding='utf-8') == stamp
-    except OSError:
-        current = False
-    if not current:
-        shutil.rmtree(code, ignore_errors=True)
-        if run_script('shader_code.py', game, out / 'eboot.elf', code, optional=True) is None:
-            shutil.rmtree(code, ignore_errors=True)  # shaders are then translated in game
-            return
-        (code / 'stamp.txt').write_text(stamp, encoding='utf-8')
+    # The extractor owns the stamp: same folder and format as run.sh's --prebuild call.
+    if run_script('shader_code.py', '--prebuild', game, out / 'eboot.elf', code,
+                  optional=True) is None:
+        shutil.rmtree(code, ignore_errors=True)  # shaders are then translated in game
+        return
     env['BB_SHADER_CODE'] = str(code)
     catalog = PORT / 'shader_catalog'
     if catalog.is_dir():

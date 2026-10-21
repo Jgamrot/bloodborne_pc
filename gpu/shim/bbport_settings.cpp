@@ -57,7 +57,13 @@ void Set(Values& v, const std::string& key, const std::string& value) {
     } else if (key == "reactive") {
         v.reactive = i != 0;
     } else if (key == "object_motion") {
-        v.object_motion = i != 0 && v.object_motion_supported.load();
+        // Keep the user's choice where the refusal is only the AMD driver risk: the menu marks
+        // it restart-to-apply, and the next start honours the explicit opt-in. Hard failures
+        // (missing feature/allocation) still force it off.
+        v.object_motion = i != 0 &&
+                          (v.object_motion_supported.load() ||
+                           v.object_motion_opt_in_allowed.load());
+        v.object_motion_explicit = true;
     } else if (key == "reactive_scale") {
         v.reactive_scale = Clamp(f, 0.0f, 16.0f);
     } else if (key == "reactive_threshold") {
@@ -205,15 +211,19 @@ bool Fsr4ImplementationNeededForRecord(int active_upscaler, bool supported, bool
     return IsFsr4(active_upscaler) && supported && !failed && !have_implementation;
 }
 
-void ConfigureObjectMotionSupport(bool supported, const char* problem) {
+void ConfigureObjectMotionSupport(bool supported, const char* problem, bool opt_in_allowed) {
     auto& v = Get();
     static std::string kept;
     kept = problem ? problem : "";
     v.object_motion_supported = supported;
-    v.object_motion_problem = supported || kept.empty() ? nullptr : kept.c_str();
+    v.object_motion_opt_in_allowed = opt_in_allowed;
+    // A supported path may still carry a warning (the AMD opt-in), so keep any text given.
+    v.object_motion_problem = kept.empty() ? nullptr : kept.c_str();
     if (!supported) {
         v.object_motion = false;
-        v.startup_object_motion = false; // no "restart to apply" for a path that cannot run
+        // A path that cannot run has no restart; the AMD risk does, so the menu can offer the
+        // switch and honour it on the next start.
+        v.startup_object_motion = opt_in_allowed ? v.object_motion.load() : false;
     }
 }
 
@@ -278,6 +288,7 @@ void Save() {
                                      "object_motion", "reactive_scale", "reactive_threshold", "reactive_max",
                                      "debug_view", "show_fps", "fsr4_auto_exposure", "fsr4_invert_jitter",
                                      "model_lod", "output_res", "live_resolution",
+                                     "frame_gen", "frame_gen_multiplier", "frame_gen_fit_display",
                                      "mouse_camera", "mouse_sensitivity", "mouse_invert_y", "mouse_menu"}) {
                 ours |= key == name;
             }

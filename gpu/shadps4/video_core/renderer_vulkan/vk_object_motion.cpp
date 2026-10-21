@@ -51,21 +51,31 @@ bool CreateBuffer(const Instance& instance, vk::DeviceSize size, bool host, vk::
 
 ObjectMotion::ObjectMotion(const Instance& instance_, Scheduler& scheduler_)
     : instance{instance_}, scheduler{scheduler_} {
-    // AMD before RDNA3 (RX 6000 and older, device ids below 0x7440): the GPU is lost at the first
-    // frame of the world with object motion on (RX 6600, 6650 XT, 6700 XT, 6900 XT), also with
-    // its stores made plain. Off there unless BB_OBJECT_MOTION=1 asks for it; the upscalers work
-    // without it, with motion from the camera only. The capability is recorded in the settings,
-    // so the menu cannot report or enable the path on this GPU.
+    // AMD before RDNA3 (RX 6000 and older, device ids below 0x7440): the GPU has been lost at
+    // the first frame of the world with object motion on (RX 6600, 6650 XT, 6700 XT, 6900 XT).
+    // Off there by default; an explicit object_motion=1 in bbport.ini (or BB_OBJECT_MOTION=1)
+    // opts in, because newer drivers may no longer fail and the menu needs a working switch.
     const auto props = instance.GetPhysicalDevice().getProperties();
     const char* forced = std::getenv("BB_OBJECT_MOTION");
-    const bool supported = !(props.vendorID == 0x1002 && props.deviceID < 0x7440 &&
-                             !(forced && forced[0] == '1'));
-    BbSettings::ConfigureObjectMotionSupport(
-        supported, "off on this AMD GPU (RX 6000 and older lose the device with it; "
-                   "BB_OBJECT_MOTION=1 turns it on)");
-    if (!supported) {
-        std::printf("Object motion: %s\n", BbSettings::Get().object_motion_problem.load());
+    auto& settings = BbSettings::Get();
+    const bool risky = props.vendorID == 0x1002 && props.deviceID < 0x7440;
+    const bool opted_in = (forced && forced[0] == '1') ||
+                          (settings.object_motion_explicit.load() &&
+                           settings.object_motion.load());
+    if (risky && !opted_in) {
+        BbSettings::ConfigureObjectMotionSupport(
+            false, "off by default on AMD RX 6000 and older (driver device loss). Set "
+                   "object_motion=1 in bbport.ini and restart, or BB_OBJECT_MOTION=1, to opt in",
+            true);
+        std::printf("Object motion: %s\n", settings.object_motion_problem.load());
         return;
+    }
+    BbSettings::ConfigureObjectMotionSupport(
+        true, risky ? "enabled by request on AMD RDNA 2; may lose the GPU (switch to camera-only "
+                      "motion if it does)"
+                    : nullptr);
+    if (risky) {
+        std::puts("Object motion: on by explicit request on AMD RDNA 2 (may lose the GPU)");
     }
     // Pipeline selection limits the extra attachment and vertex stores to likely
     // animated draws. A setting or environment override can still disable the path.

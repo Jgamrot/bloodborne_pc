@@ -36,9 +36,30 @@ if [[ -z ${PYTHON:-} ]]; then
     fi
 fi
 if [[ -z ${PYTHON:-} ]]; then echo 'Install Python 3 or set PYTHON.' >&2; exit 1; fi
-# BB_GAME_DIR: the game's folder (eboot.bin, sce_module, ...); default next to this directory.
+# BB_GAME_DIR: the game's folder (eboot.bin, sce_module, ...). Without it, use the game folder
+# saved by the launcher (settings.json), then the folder next to this one.
+if [[ -z ${BB_GAME_DIR:-} ]]; then
+    if [[ -f ../CUSA03173/eboot.bin ]]; then
+        BB_GAME_DIR=../CUSA03173
+    else
+        config=${XDG_CONFIG_HOME:-${HOME:-}/.config}/bbport-launcher/settings.json
+        if [[ -f $config ]]; then
+            saved=$("$PYTHON" -c 'import json,sys; v=json.load(open(sys.argv[1], encoding="utf-8")).get("game_dir",""); print(v if isinstance(v,str) else "")' "$config" 2>/dev/null || true)
+            if [[ -n $saved ]]; then
+                saved=${saved/#\~/${HOME:-}}
+            fi
+            if [[ -n $saved && -f $saved/eboot.bin ]]; then
+                BB_GAME_DIR=$saved
+            fi
+        fi
+    fi
+fi
 game=${BB_GAME_DIR:-../CUSA03173}
-if [[ ! -f $game/eboot.bin ]]; then echo "No eboot.bin in $game (set BB_GAME_DIR)." >&2; exit 1; fi
+if [[ ! -f $game/eboot.bin ]]; then
+    echo "No eboot.bin in $game." >&2
+    echo "Set BB_GAME_DIR to the folder containing eboot.bin, or choose it in the launcher." >&2
+    exit 1
+fi
 original_game=$game
 # Sizes chosen below for the previous launch are recomputed after an in-game restart.
 if [[ ${BB_AUTO_RENDER_RES:-} == 1 ]]; then
@@ -136,6 +157,18 @@ if [[ $game != "$(realpath "$original_game")" ]]; then
     trap '"$PYTHON" -c '\''import shutil,sys; shutil.rmtree(sys.argv[1])'\'' "$mod_game"' EXIT
 fi
 "$PYTHON" scripts/prepare.py "$game" --out "$out"
+# Shader pre-build (same as run.py): the game's own shader code, extracted once into
+# out/shader_code, lets the pipeline cache translate the shaders its cache and the shipped
+# catalog know before they are first drawn. Fewer first-use compiles when an area or a new
+# animated model appears. BB_SHADER_PREBUILD=0 turns it off.
+if [[ ${BB_SHADER_PREBUILD:-1} != 0 ]]; then
+    if "$PYTHON" scripts/shader_code.py --prebuild "$game" "$out/eboot.elf" "$out/shader_code"; then
+        export BB_SHADER_CODE="$out/shader_code"
+    fi
+fi
+if [[ -d shader_catalog ]]; then
+    export BB_SHADER_CATALOG=$PWD/shader_catalog
+fi
 "$PYTHON" scripts/link_libc.py "$game" --out "$out"
 "$PYTHON" scripts/link_modules.py "$game" --out "$out"
 # Legacy CPU profile (scripts/cpu_compat.py): bb-probe's CPU check lets such a CPU start.

@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <unordered_map>
 #include <shared_mutex>
 #include <variant>
@@ -122,6 +123,12 @@ public:
 
     void WarmUp();
     void Sync();
+    /// bbport diagnostics (BB_FRAME_STATS): compiled object counts, to tell a growing cache from
+    /// a power/thermal limit. Runs on the GPU thread.
+    void ReportCache();
+    /// bbport: once per display frame. Evicts pipelines unused for BB_PIPELINE_GC_MINUTES
+    /// (default 10; 0 disables) after the GPU has finished their last submission.
+    void Tick();
 
     bool LoadComputePipeline(Serialization::Archive& ar);
     bool LoadGraphicsPipeline(Serialization::Archive& ar);
@@ -161,6 +168,8 @@ public:
     }
 
 private:
+    void Touch(Pipeline& pipeline);
+    void CollectUnusedPipelines(int minutes);
     bool RefreshGraphicsKey(PipelineSelection& sel);
     bool RefreshGraphicsStages(PipelineSelection& sel);
     bool RefreshComputeKey();
@@ -198,6 +207,11 @@ private:
     PipelineSelection sel{}; ///< GPU thread selection state
     ComputePipelineKey compute_key{};
     u32 num_new_pipelines{}; // new pipelines added to the cache since the game start
+    /// bbport: pipeline-cache age tracking. A pipeline is evicted when it was not returned for
+    /// a draw during the previous collection interval.
+    u64 frame_epoch{};
+    u64 last_collection_epoch{1}; ///< frame_epoch at the previous collection
+    std::chrono::steady_clock::time_point last_collection{std::chrono::steady_clock::now()};
 
     // Only if Config::collectShadersForDebug()
     tsl::robin_map<vk::ShaderModule,

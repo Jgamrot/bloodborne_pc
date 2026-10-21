@@ -192,7 +192,8 @@ def game_environment(s):
         env["BB_DRAW_PIPE"] = str(s["draw_pipe"])
     if s.get("readbacks"):
         env["BB_READBACKS"] = str(s["readbacks"])
-    if s.get("frames_ahead"):
+    if s.get("frames_ahead") not in (None, ""):
+        # 0 means no bound, so it must be exported too.
         env["BB_FRAMES_AHEAD"] = str(s["frames_ahead"])
     if s.get("vram_budget_mb"):
         env["BB_GC_BUDGET_MB"] = str(s["vram_budget_mb"])
