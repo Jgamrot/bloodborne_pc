@@ -216,10 +216,11 @@ def main():
     # As run.sh: relative paths (BB_GAME_DIR, BB_DATA_DIR, fsr4_shaders/) are from the port.
     os.chdir(PORT)
     env = os.environ
-    data = Path(env.get('BB_DATA_DIR', PORT))
+    data = Path(env.get('BB_DATA_DIR') or PORT)
     out = data / 'out'
     out.mkdir(parents=True, exist_ok=True)
-    env.setdefault('BB_CONFIG', str(data / 'bbport.ini'))
+    if not env.get('BB_CONFIG'):
+        env['BB_CONFIG'] = str(data / 'bbport.ini')
     config = env['BB_CONFIG']
     if not env.get('BB_FSR411_DIR') and not (PORT / 'fsr4_411').is_dir() and (data / 'fsr4_411').is_dir():
         env['BB_FSR411_DIR'] = str(data / 'fsr4_411')
@@ -233,7 +234,7 @@ def main():
         if clang64.is_dir():
             env['PATH'] = f'{clang64}{os.pathsep}{env.get("PATH", "")}'
 
-    game = Path(env.get('BB_GAME_DIR', PORT.parent / 'CUSA03173'))
+    game = Path(env.get('BB_GAME_DIR') or PORT.parent / 'CUSA03173')
     if not (game / 'eboot.bin').is_file():
         fail(f'No eboot.bin in {game} (set BB_GAME_DIR).')
     original_game = game.resolve()
@@ -298,9 +299,9 @@ def main():
                                          PORT / 'packaging/windows/bundled' / KEYBOARD_PROMPTS)
                    if folder.is_dir()][:1]
     game = Path(run_script('mods.py', game, '--out', out,
-                           '--mods-dir', env.get('BB_MODS_DIR', data / 'mods'),
-                           '--config', env.get('BB_MODS_CONFIG', data / 'mods.json'),
-                           '--enabled', env.get('BB_MODS_ENABLED', '1'),
+                           '--mods-dir', env.get('BB_MODS_DIR') or data / 'mods',
+                           '--config', env.get('BB_MODS_CONFIG') or data / 'mods.json',
+                           '--enabled', env.get('BB_MODS_ENABLED') or '1',
                            *(arg for folder in generated for arg in ('--generated', folder)),
                            *(arg for folder in bundled for arg in ('--bundled', folder)),
                            *(arg for folder in bundled_off for arg in ('--bundled-off', folder)),
@@ -314,8 +315,8 @@ def main():
         sys.path.insert(0, str(PORT / 'scripts'))
         import mods as mod_list
         try:
-            keyboard = KEYBOARD_PROMPTS in mod_list.selected(Path(env.get('BB_MODS_DIR', data / 'mods')),
-                                                           Path(env.get('BB_MODS_CONFIG', data / 'mods.json')))
+            keyboard = KEYBOARD_PROMPTS in mod_list.selected(Path(env.get('BB_MODS_DIR') or data / 'mods'),
+                                                            Path(env.get('BB_MODS_CONFIG') or data / 'mods.json'))
         except (OSError, ValueError):
             pass
     env['BB_BUTTON_PROMPTS'] = 'Keyboard' if keyboard else ''
@@ -421,14 +422,14 @@ def main():
         run_script('patches.py', '--out', out, '--fps', fps, '--extra', extra,
                    '--settings', config, '--game-dir', game, '--render-res', env.get('BB_RENDER_RES', ''),
                    '--output-res', env.get('BB_OUTPUT_RES', ''),
-                   '--patches-dir', env.get('BB_PATCHES_DIR', data / 'patches'),
-                   '--patches-config', env.get('BB_PATCHES_CONFIG', data / 'patches.json'))
+                   '--patches-dir', env.get('BB_PATCHES_DIR') or data / 'patches',
+                   '--patches-config', env.get('BB_PATCHES_CONFIG') or data / 'patches.json')
         if not env.get('BB_VBLANK_HZ'):
             env['BB_VBLANK_HZ'] = {'uncap': '0', '90': '90'}.get(fps, '60')
 
         # The in-game restart starts this script again once this process is gone.
         # GPU caches (shaders, pipelines) beside the saves; read before main(), so set here.
-        user_dir = Path(env.get('BB_USER_DIR', data / 'user')).resolve()
+        user_dir = Path(env.get('BB_USER_DIR') or data / 'user').resolve()
         user_dir.mkdir(parents=True, exist_ok=True)
         env.setdefault('BB_GPU_USER_DIR', str(user_dir))
         if env.get('BB_COOP') == '1':
@@ -448,7 +449,7 @@ def main():
         command = [str(probe), str(out / 'boot-linked.bin'), '--content-profile', str(out / 'content.bin'),
                    '--patches', str(out / 'patches.bin'), '--app0', str(game),
                    '--user', str(user_dir),
-                   '--timeout', env.get('BB_TIMEOUT', '0'), *args]
+                   '--timeout', env.get('BB_TIMEOUT') or '0', *args]
         # No stdin: an inherited pipe (shells such as Git Bash) cost the game its console output.
         game_proc = subprocess.Popen(command, stdin=subprocess.DEVNULL, creationflags=no_console())
         started = []

@@ -7,7 +7,8 @@
 #include <cstdint>
 
 namespace BbWriteLog {
-enum Source : std::uint32_t { Backing, WriteData, Fence, FenceIntent, WriteDataIntent, EosIntent };
+enum Source : std::uint32_t { Backing, WriteData, Fence, FenceIntent, WriteDataIntent, EosIntent,
+                              DmaData };
 bool Enabled();
 /// BB_WRITE_LOG=1: at the write itself (changes the timing of those writes).
 void Note(std::uint64_t address, const void* data, std::uint64_t size, Source source);

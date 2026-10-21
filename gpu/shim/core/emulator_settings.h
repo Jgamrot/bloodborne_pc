@@ -47,7 +47,19 @@ public:
         static const u32 value = [] {
             const long limit = Number("BB_FPS_LIMIT", -1);
             if (limit >= 0) return u32(limit);
-            return Number("BB_VBLANK_HZ", 60) > 0 ? 0u : std::min<u32>(BbDisplayRefreshHz(), 120);
+            const std::string fps = Text("BB_FPS", "");
+            if (fps == "30") return 30u;
+            if (fps == "60") return 60u;
+            if (fps == "90") return 90u;
+            if (fps == "uncap") return std::min<u32>(BbDisplayRefreshHz(), 120);
+            if (!fps.empty()) {
+                try {
+                    const long parsed = std::stol(fps);
+                    if (parsed >= 0) return u32(parsed);
+                } catch (...) {}
+            }
+            const long vblank = Number("BB_VBLANK_HZ", 60);
+            return vblank > 0 ? u32(vblank) : std::min<u32>(BbDisplayRefreshHz(), 120);
         }();
         return value;
     }

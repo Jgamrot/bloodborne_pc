@@ -52,8 +52,11 @@ void bbgpu_set_frame_callback(void (*callback)(void));
 int bbgpu_setting_get(const char *key, int *value);
 int bbgpu_setting_default(const char *key, int *value);
 void bbgpu_setting_set(const char *key, int value);
+void bbgpu_settings_save(void);
 /* Whether this GPU runs the upscaler (BbSettings::Upscaler index). */
 int bbgpu_upscaler_supported(int upscaler);
+int bbgpu_active_upscaler(void);
+const char* bbgpu_upscaler_fallback_reason(void);
 /* Local achievements (BbTrophies: the game's own trophy pack and the unlock history), read
  * only, for the in-game PC menu. Names are empty without the player's trophy key. */
 typedef struct {

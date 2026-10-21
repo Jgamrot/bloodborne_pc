@@ -4,6 +4,7 @@ Runs before any window exists, so it only does quick file checks and never touch
 save or trophy data.
 """
 import ctypes
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -15,8 +16,13 @@ SETUP_VERSION = 1
 PROBLEMS = {'game': ('Game files not found', 1), 'saves': ('Saves folder is not writable', 2)}
 
 
+def expanded(value):
+    """A configured folder with `~` and Windows `%VARIABLE%` expanded."""
+    return Path(os.path.expandvars(os.path.expanduser(str(value))))
+
+
 def game_ok(settings):
-    return (Path(settings.get('game_dir') or '.') / 'eboot.bin').is_file()
+    return (expanded(settings.get('game_dir') or '.') / 'eboot.bin').is_file()
 
 
 def writable(folder):
@@ -37,7 +43,8 @@ def writable(folder):
 
 
 def saves_folder(settings, data_dir):
-    return Path(settings.get('user_dir') or Path(data_dir) / 'user')
+    folder = settings.get('user_dir')
+    return expanded(folder) if folder else Path(data_dir) / 'user'
 
 
 def migrate(saved, settings):

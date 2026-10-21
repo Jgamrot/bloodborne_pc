@@ -450,7 +450,7 @@ SceneTargets::Target SceneTargets::Attachment(VideoCore::ImageId id,
     return {e.image, View(e, original, attachment_info), e.layout, e.image.image_ci.usage};
 }
 bool SceneTargets::ProxyCurrent(const VideoCore::Image& image, u32 level, u32 levels) const {
-    if (copying || !image.scene_proxy || image.info.props.is_depth || levels != 1) {
+    if (copying || !image.scene_proxy || levels != 1) {
         return false;
     }
     const auto it = entries.find(Key(image.image_uid, level));
@@ -458,7 +458,9 @@ bool SceneTargets::ProxyCurrent(const VideoCore::Image& image, u32 level, u32 le
 }
 vk::ImageLayout SceneTargets::PrepareSample(const VideoCore::Image& image, u32 level) {
     auto& e = *entries.find(Key(image.image_uid, level))->second;
-    constexpr auto layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    const auto layout = image.info.props.is_depth
+        ? vk::ImageLayout::eDepthStencilReadOnlyOptimal
+        : vk::ImageLayout::eShaderReadOnlyOptimal;
     if (e.layout != layout) {
         Transition(e, image.aspect_mask, layout,
                    vk::PipelineStageFlagBits2::eVertexShader |

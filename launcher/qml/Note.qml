@@ -7,5 +7,5 @@ Text {
     font.family: Theme.sans
     font.pixelSize: 12
     wrapMode: Text.WordWrap
-    lineHeight: 1.3
+    lineHeight: 1.35
 }

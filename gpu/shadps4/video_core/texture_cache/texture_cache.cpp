@@ -41,9 +41,9 @@ TextureCache::TextureCache(const Vulkan::Instance& instance_, Vulkan::Scheduler&
 
     // Set up garbage collection parameters.
     if (!instance.CanReportMemoryUsage()) {
-        trigger_gc_memory = 0;
         pressure_gc_memory = DEFAULT_PRESSURE_GC_MEMORY;
         critical_gc_memory = DEFAULT_CRITICAL_GC_MEMORY;
+        trigger_gc_memory = static_cast<u64>(pressure_gc_memory / 10 * 7);
         return;
     }
 
@@ -59,7 +59,9 @@ TextureCache::TextureCache(const Vulkan::Instance& instance_, Vulkan::Scheduler&
     critical_gc_memory = static_cast<u64>(
         std::max<u64>(std::min(device_local_memory - min_vacancy_critical, min_spacing_critical),
                       DEFAULT_CRITICAL_GC_MEMORY));
-    trigger_gc_memory = static_cast<u64>((device_local_memory - mem_threshold) / 2);
+    trigger_gc_memory = static_cast<u64>(
+        device_local_memory > 0 ? (static_cast<u64>(device_local_memory) / 10 * 7)
+                                : (static_cast<u64>(DEFAULT_PRESSURE_GC_MEMORY) / 10 * 7));
 }
 
 TextureCache::~TextureCache() = default;
@@ -1136,15 +1138,17 @@ void TextureCache::GarbageCollectImages() {
         if (driver_budget != 0) {
             vram_critical = driver_budget / 100 * (instance.IsIntegrated() ? 95 : 90);
         }
+        const u64 fallback_budget = instance.GetTotalMemoryBudget() != 0
+                                        ? instance.GetTotalMemoryBudget()
+                                        : static_cast<u64>(DEFAULT_PRESSURE_GC_MEMORY);
         const u64 budget = forced_budget && driver_budget ? std::min(forced_budget, driver_budget)
                            : forced_budget                ? forced_budget
-                                                          : driver_budget;
+                           : driver_budget                ? driver_budget
+                                                          : fallback_budget;
         if (instance.IsIntegrated() || forced_budget) {
-            if (budget != 0) {
-                trigger_gc_memory = budget / 10 * 7;
-                pressure_gc_memory = budget / 100 * (instance.IsIntegrated() ? 85 : 80);
-                critical_gc_memory = budget / 100 * (instance.IsIntegrated() ? 95 : 90);
-            }
+            trigger_gc_memory = budget / 10 * 7;
+            pressure_gc_memory = budget / 100 * (instance.IsIntegrated() ? 85 : 80);
+            critical_gc_memory = budget / 100 * (instance.IsIntegrated() ? 95 : 90);
         } else {
             // bbport: on a discrete GPU the startup marks put pressure at 40% of the budget
             // (2.5 GB of an 8 GB laptop RTX 4060's 6.1 GB): usage, which counts every buffer and
@@ -1153,10 +1157,9 @@ void TextureCache::GarbageCollectImages() {
             // Pressure at 80% and critical at 90% of the driver's budget; below them only the
             // idle rule (images unused for BB_GC_IDLE_SECONDS) applies, which keeps the issue #32
             // fix: the textures of areas left behind still go.
-            if (budget != 0) {
-                pressure_gc_memory = budget / 100 * 80;
-                critical_gc_memory = budget / 100 * 90;
-            }
+            trigger_gc_memory = budget / 10 * 7;
+            pressure_gc_memory = budget / 100 * 80;
+            critical_gc_memory = budget / 100 * 90;
         }
     }
     // bbport: gc_tick (one per guest submission, hundreds a second) at each of the last 64
@@ -1180,8 +1183,21 @@ void TextureCache::GarbageCollectImages() {
         const char* env = std::getenv("BB_GC_IDLE_SECONDS");
         return std::clamp<u64>(env ? std::strtoull(env, nullptr, 10) : 20, 1, 63);
     }();
+    // Under pressure an image goes once unused for BB_GC_PRESSURE_IDLE_SECONDS (5), over the
+    // critical mark for 1 s first, and only then by submissions (a fraction of a second). On
+    // smaller cards the usage stayed over the pressure mark, so textures off screen for a moment
+    // were evicted and uploaded again over the bus: the frame rate fell the longer the game
+    // ran. (bbport 0.5, deadinside28/bloodborne_pc c7e3e55, via parsifal295's PR #63 and
+    // Supermedo/bloodborne_pc 96502c8.)
+    static const u64 pressure_idle_seconds = [] {
+        const char* env = std::getenv("BB_GC_PRESSURE_IDLE_SECONDS");
+        return std::clamp<u64>(env ? std::strtoull(env, nullptr, 10) : 5, 0, 63);
+    }();
     // The tick at the start of that second (an older one where no submission came then).
-    const u64 idle_tick = gc_tick_at_second[(second - idle_seconds) % gc_tick_at_second.size()];
+    const auto tick_seconds_ago = [&](u64 seconds) {
+        return gc_tick_at_second[(second - seconds) % gc_tick_at_second.size()];
+    };
+    const u64 idle_tick = tick_seconds_ago(idle_seconds);
     // Last used a minute ago or more (lru_touched_tick: real use, not the collector's Touch).
     const u64 minute_tick = gc_tick_at_second[(second - 60) % gc_tick_at_second.size()];
     std::scoped_lock lock{mutex};
@@ -1191,13 +1207,16 @@ void TextureCache::GarbageCollectImages() {
     size_t num_deletions = 0;
     u32 visited = 0;
 
-    const auto configure = [&](bool allow_aggressive) {
+    // emergency: still over the critical mark after evicting what was unused for a second.
+    const auto configure = [&](bool allow_aggressive, bool emergency = false) {
         pressured = total_used_memory >= pressure_gc_memory;
         aggresive = allow_aggressive && total_used_memory >= critical_gc_memory;
         const u64 ticks_to_destroy = std::min<u64>(aggresive ? 160 : pressured ? 80 : 16, gc_tick);
         below_tick = gc_tick - ticks_to_destroy;
         if (!pressured && !aggresive) {
             below_tick = std::min(below_tick, idle_tick);
+        } else if (!emergency) {
+            below_tick = std::min(below_tick, tick_seconds_ago(aggresive ? 1 : pressure_idle_seconds));
         }
         num_deletions = aggresive ? 40 : pressured ? 20 : 10;
         visited = 0;
@@ -1268,6 +1287,12 @@ void TextureCache::GarbageCollectImages() {
     if (total_used_memory >= critical_gc_memory) {
         // If we are still over the critical limit, run an aggressive GC
         configure(true);
+        gc_kept = gc_kept_bytes = 0;
+        lru_cache.ForEachItemBelow(below_tick, clean_up);
+    }
+    if (total_used_memory >= critical_gc_memory) {
+        // Still over it: what was used a moment ago goes too (out of memory otherwise).
+        configure(true, true);
         gc_kept = gc_kept_bytes = 0;
         lru_cache.ForEachItemBelow(below_tick, clean_up);
     }

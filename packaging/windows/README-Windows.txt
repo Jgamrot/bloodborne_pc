@@ -18,28 +18,27 @@ Requirements
 Starting
 - Bloodborne.exe opens the first-run setup wizard on a new install. Follow its Game and
   Your data steps, or choose "Skip setup" to use the launcher directly. The wizard can
-  be reopened from Game -> "Setup wizard".
-- On "Game" choose the folder containing eboot.bin,
-  adjust settings, then press PLAY. The Home page shows the game version, saves, graphics
-  card and FSR 4 assets. The new Qt Quick panels let the background show through.
-- If you have cusa-03173.zip instead of an extracted game folder, use Game ->
+  be reopened from Game & saves -> "Setup wizard".
+- On "Game & saves" choose the folder containing eboot.bin, adjust settings, then press
+  PLAY. Overview shows the game version, saves, graphics card and FSR 4 assets.
+- If you have cusa-03173.zip instead of an extracted game folder, use Game & saves ->
   "Install from ZIP / PKG". Choose your ZIP, then an empty destination parent folder.
   The bundled extractor applies the plain 1.09 update and sets the Game folder for you.
   With a 30 GB ZIP, allow about 70 GB of free space while it runs. Existing game folders
   are never replaced. You can also choose the base and plain 1.09 PKGs directly.
-- On Game, review "Setup checks" before PLAY. It checks the game folders and version,
+- On Game & saves, review the readiness checks before PLAY. They check the game folders and version,
   whether the trophy pack and key format are present, and whether the save folder is
   writable. Amber for saves is expected before your first save. Use "Check again" after
   copying files. Trophy-name decryption is only confirmed once the game reads the pack.
 - Play Bloodborne.exe starts the game straight away with the settings saved in the launcher,
   without opening it. Set things up once in Bloodborne.exe, then use Play Bloodborne.exe (or a
-  shortcut to it, or "Add to Steam" on the Advanced page). If no game folder is chosen
+  shortcut to it, or "Add to Steam" on the System page). If no game folder is chosen
   yet it opens the launcher. Bloodborne.exe --play does the same. The log goes to
   user\last_run.log.
-- Advanced -> "Desktop shortcut" puts Bloodborne on the desktop.
-- Updates: when a new version is out, the launcher shows a notice; Advanced ->
+- System -> "Desktop shortcut" puts Bloodborne on the desktop.
+- Updates: when a new version is out, the launcher shows a notice; System ->
   "Install update" downloads and installs it. Saves, settings and mods are kept.
-  Advanced -> "Check for updates" checks by hand.
+  System -> "Check for updates" checks by hand.
 - The Qt Quick launcher currently displays English labels. The classic launcher retains its
   English, Russian, Arabic, Spanish, Portuguese, French, German, Italian, Polish, Turkish,
   Chinese, Japanese and Korean translations. Run Bloodborne.exe --classic-launcher to use it.
@@ -76,18 +75,17 @@ Data
 - Generated files (prepared game image, patches): out\.
 
 Online play (beta)
-- Create a shadNet account at https://shadps4.net/shadnet/register/ (no Discord
-  required). In the launcher open "Online", tick "Play online", enter the account
-  name (not the email) and password, then PLAY and choose online at the title screen.
-  "Test connection" checks server reachability; it does not verify account sign-in.
-  The Hunter's Dream website account is separate and optional for gameplay.
+- Sign in to The Hunter's Dream with Discord from the Online page (approve the code on
+  its website). Then choose "Online" on Overview before Play. "Test connection" checks
+  server reachability; it does not verify sign-in. Seamless co-op is configured separately
+  on the Online page with BBSC and Tailscale.
 - Messages, bloodstains and ghosts come from The Hunter's Dream (https://thehuntersdream.com);
   bells and summons go through the shadNet server. Everyone needs game version 1.09 and the
   same co-op server. Summoning between players is not confirmed yet.
 
 PC enhancements
-- In the launcher's Mods page, Hunter's Dream Mirror, Two Invaders, and Rebirth at the
-  Altar are optional and off by default. They are made from your own game files at launch;
+- In the launcher's Mods & patches page, Hunter's Dream Mirror, Two Invaders, and Rebirth at
+  the Altar are optional and off by default. They are made from your own game files at launch;
   turn one on, then restart. They do not require the Load mods switch.
 
 Discord Rich Presence
@@ -97,18 +95,18 @@ Discord Rich Presence
   settings are in companions\Discord Rich Presence\config.json. It only reads the game's memory.
 
 Cheats
-- The "Cheats" page has cheats (never die, enemies do not see or hear you, Rally never fades,
+- Mods & patches -> Gameplay patches has cheats (never die, enemies do not see or hear you, Rally never fades,
   control the targeted enemy) and gameplay tweaks (no Rally, camera further away, no camera
   auto-rotation, run with less stick tilt, ragdoll physics). They are game patches for 1.09,
   applied when the game starts.
 
 Problems
-- Black screen at start: Advanced -> "Clear shader cache", then start again (the first minutes
+- Black screen at start: System -> Maintenance -> "Clear shader cache", then start again (the first minutes
   stutter while the cache is rebuilt).
-- Send user\last_run.log with any bug report.
+- Send user\last_run.log and the launcher log saved from Diagnostics -> "Save log..." with any bug report.
 - On supported CUSA03173 1.09 images, death respawns skip the game's fixed 12-second minimum
   delay while still waiting for assets and character readiness. To restore the original delay,
-  set BB_RESPAWN_DELAY_FIX=0 in Advanced -> environment overrides and restart the game.
+  set BB_RESPAWN_DELAY_FIX=0 in System -> Engine -> Extra environment variables and restart the game.
 - Water-heavy scenes use a motion-vector image for each render size instead of repeatedly
   waiting for the GPU when render-target sizes change.
 

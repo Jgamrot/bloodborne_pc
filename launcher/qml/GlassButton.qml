@@ -1,16 +1,25 @@
 import QtQuick
 import QtQuick.Controls
 
-// Buttons: `highlighted` is the one primary action on a surface (crimson), others are quiet
-// outlines; `serif` sets the label in the display face (Play).
+// Shared launcher button. `highlighted` is the single primary action on a page; everything
+// else is a quiet outline. `serif` is retained for the large launch action and setup title.
 Button {
     id: button
     property bool primary: highlighted
     property bool serif: false
-    font.family: serif ? Theme.serif : Theme.sans
-    font.pixelSize: serif ? 20 : 13
-    font.letterSpacing: serif ? 0.5 : 0.2
+    focusPolicy: Qt.StrongFocus
     hoverEnabled: true
+    font.family: serif ? Theme.serif : Theme.sans
+    font.pixelSize: serif ? 15 : 12.5
+    font.weight: serif ? Font.Normal : Font.DemiBold
+    font.letterSpacing: serif ? 0.4 : 0.2
+    leftPadding: 14
+    rightPadding: 14
+    topPadding: 0
+    bottomPadding: 0
+    implicitHeight: 34
+    Accessible.role: Accessible.Button
+    Accessible.name: text
     contentItem: Text {
         text: button.text
         font: button.font
@@ -20,11 +29,13 @@ Button {
         elide: Text.ElideRight
     }
     background: Rectangle {
-        radius: Theme.radius
-        color: button.primary ? (!button.enabled ? Theme.accentSoft : button.down ? "#a92a35" : button.hovered ? Theme.accentHover : Theme.accent)
-                              : button.down ? Theme.surfaceHover : button.hovered ? Theme.surfaceHover : "transparent"
-        border.color: button.primary ? "transparent" : button.hovered ? Theme.lineStrong : Theme.line
+        radius: Theme.radiusSmall
+        color: button.primary
+               ? (!button.enabled ? Theme.accentSoft : button.down ? "#9c2d3a" : button.hovered ? Theme.accentHover : Theme.accent)
+               : (!button.enabled ? "transparent" : button.down ? Theme.surfaceActive : button.hovered ? Theme.surfaceHover : "transparent")
+        border.color: button.primary ? (button.enabled ? "transparent" : Theme.line)
+                                     : (button.hovered ? Theme.lineStrong : Theme.line)
         border.width: 1
-        Behavior on color { ColorAnimation { duration: 110 } }
+        Behavior on color { ColorAnimation { duration: 90 } }
     }
 }

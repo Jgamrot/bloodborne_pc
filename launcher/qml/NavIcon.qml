@@ -31,7 +31,7 @@ Canvas {
         case "hunter": // the guide's mark: a blade crossed with a compass rose
             line([12, 1.5, 12, 22.5]); line([3.5, 12, 20.5, 12])
             shape([12, 5, 15, 12, 12, 19, 9, 12]); line([9.5, 20, 12, 22.5, 14.5, 20]); break
-        case "home":
+        case "overview": case "home":
             line([3, 11, 12, 3.5, 21, 11]); line([5, 9.5, 5, 21, 19, 21, 19, 9.5]); rect(10, 14.5, 4, 6.5); break
         case "play":
             shape([7, 4.5, 19, 12, 7, 19.5]); break
@@ -49,8 +49,12 @@ Canvas {
             c.lineTo(17.5, 7.5); c.lineTo(17.5, 11.7)
             c.bezierCurveTo(19.2, 10.7, 21.5, 11.1, 21.5, 13.5); c.bezierCurveTo(21.5, 15.9, 19.2, 16.3, 17.5, 15.3)
             c.lineTo(17.5, 20.5); c.lineTo(4, 20.5); c.closePath(); c.stroke(); break
-        case "visuals": case "graphics": case "display":
+        case "visuals": case "display":
             rect(2.5, 4, 19, 13); line([8.5, 21, 15.5, 21]); line([12, 17, 12, 21]); break
+        case "graphics":
+            rect(4, 4, 16, 16); rect(8, 8, 8, 8)
+            line([4, 1.5, 4, 4]); line([20, 1.5, 20, 4]); line([4, 20, 4, 22.5]); line([20, 20, 20, 22.5])
+            line([1.5, 4, 4, 4]); line([1.5, 20, 4, 20]); line([20, 4, 22.5, 4]); line([20, 20, 22.5, 20]); break
         case "controls": case "controller":
             c.beginPath(); c.moveTo(6.5, 7.5); c.lineTo(17.5, 7.5); c.quadraticCurveTo(21, 8.5, 22, 15)
             c.quadraticCurveTo(22.5, 20, 19, 19.5); c.lineTo(15.5, 16.5); c.lineTo(8.5, 16.5); c.lineTo(5, 19.5)

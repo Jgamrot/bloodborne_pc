@@ -436,7 +436,7 @@ def enabled(settings, env):
 def read_settings(path):
     values = {}
     try:
-        for line in Path(path).read_text(encoding='utf-8').splitlines():
+        for line in Path(path).read_text(encoding='utf-8', errors='replace').splitlines():
             if '=' in line and not line.lstrip().startswith('#'):
                 key, value = line.split('=', 1)
                 values[key.strip()] = value.strip()

@@ -23,6 +23,7 @@
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
 #include "video_core/renderer_vulkan/vk_gpu_profiler.h"
 #include "bbport_threads.h"
+#include "bbport_write_log.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_shader_hle.h"
@@ -3054,11 +3055,17 @@ void Rasterizer::DepthStencilCopy(bool is_depth, bool is_stencil) {
 
 void Rasterizer::FillBuffer(VAddr address, u32 num_bytes, u32 value, bool is_gds) {
     DrainDrawPipe();
+    // bbport: the guest sees this write. Fences deferred to the recording thread earlier in
+    // the stream must be written first, or the guest may free memory a pending fence then
+    // writes into (corrupted heap, guest fault).
+    WaitDeferredSignals();
     ASSERT_MSG(address % 4 == 0 && num_bytes % 4 == 0,
                "FillBuffer address and size must be a multiple of 4 bytes");
     if (!is_gds) {
         texture_cache.ClearMeta(address);
         if (!buffer_cache.IsRegionGpuModified(address, num_bytes)) {
+            const u64 logged = value;
+            BbWriteLog::Note(address, &logged, num_bytes, BbWriteLog::DmaData);
             u32* buffer = std::bit_cast<u32*>(address);
             std::fill(buffer, buffer + (num_bytes / sizeof(u32)), value);
             return;
@@ -3075,10 +3082,13 @@ void Rasterizer::FillBuffer(VAddr address, u32 num_bytes, u32 value, bool is_gds
 
 void Rasterizer::CopyBuffer(VAddr dst, VAddr src, u32 num_bytes, bool dst_gds, bool src_gds) {
     DrainDrawPipe();
+    // bbport: as in FillBuffer: this guest-visible write must not overtake deferred fences.
+    WaitDeferredSignals();
     if (!dst_gds && !buffer_cache.IsRegionGpuModified(dst, num_bytes)) {
         if (!src_gds && !buffer_cache.IsRegionGpuModified(src, num_bytes) &&
             !texture_cache.FindImageFromRange(src, num_bytes)) {
             // Both buffers were not transferred to GPU yet. Can safely copy in host memory.
+            BbWriteLog::Note(dst, std::bit_cast<const void*>(src), num_bytes, BbWriteLog::DmaData);
             std::memcpy(std::bit_cast<void*>(dst), std::bit_cast<void*>(src), num_bytes);
             return;
         }

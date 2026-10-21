@@ -3,6 +3,13 @@
 The port builds and runs natively on 64-bit Windows 10 (1903+) / 11 with the same sources as
 on Linux. Players: see `README-Windows.txt` (it ships in the package).
 
+The primary launcher UI is Qt Quick/PySide6 under `launcher/qml/`; the Tk implementation is
+kept as the fallback for environments where Qt Quick cannot start. Page structure, Wine
+behaviour and verification are documented in
+[`docs/WINDOWS_LAUNCHER.md`](../../docs/WINDOWS_LAUNCHER.md). Under Wine/Proton the launcher
+selects Qt Quick's OpenGL backend; native Windows keeps Direct3D 11. `BB_LAUNCHER_DEBUG=1`
+writes launcher/QML diagnostics to `%APPDATA%\bbport-launcher\launcher-debug.log`.
+
 ## Build
 
 Install [MSYS2](https://www.msys2.org) (`winget install MSYS2.MSYS2`), open the
@@ -33,6 +40,9 @@ bash packaging/windows/package.sh  # dist/bbport-windows/ and .zip: Bloodborne.e
 The package freezes the launcher with PyInstaller (a private venv in `out/pyenv`, from a
 python.org Python) into `Bloodborne.exe`, which also runs `run.py` (`--run`), the preparation
 scripts (`--script`) and the game without the window (`--play`): players need no Python.
+The package copies `launcher/qml/` next to the frozen executable; QML is deliberately not
+embedded in the PyInstaller archive so it can be inspected and updated in place.
+Launcher tests: `python -m unittest discover -s tests`.
 `Play Bloodborne.exe` (`packaging/windows/play.c`) is a small native program that runs
 `Bloodborne.exe --play` from its folder and waits for it, for players who want to start the
 game directly with the saved settings.
@@ -73,5 +83,5 @@ and the presented image of the next frame to `BB_DUMP_DIR` (raw 32-bit pixels), 
 works for menus and movies.
 
 Not ported: the watchdog/`--timeout` thread dumps (Linux signals), userfaultfd tracking
-(`BB_UFFD`), MangoHud, PGO (GCC flags), the GTK launcher (`launcher/bbport_launcher_win.py`, Tkinter, replaces it), and
-the `tests/` programs (several use Linux-only APIs).
+(`BB_UFFD`), MangoHud, PGO (GCC flags), the GTK launcher (the Windows launcher uses
+PySide6/Qt Quick with a Tk fallback), and the `tests/` programs (several use Linux-only APIs).

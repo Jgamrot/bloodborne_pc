@@ -4,7 +4,8 @@ import unittest
 
 import hud_layout
 from patches import (CAMERA_ASPECT, EBOOT_BASE, HUD_PROJECTION_WIDTH, MARKER_BIAS, OUTPUT_SIZE,
-                     ULTRAWIDE_TEMPLATE, compile_patches, hud_canvas, ultrawide_writes)
+                     ULTRAWIDE_TEMPLATE, compile_patches, hud_canvas, scaled_sizes, ultrawide,
+                     ultrawide_writes)
 
 XML = ROOT / 'patches/Bloodborne.xml'
 SEGMENTS = [(0, 0x6000000)]
@@ -137,3 +138,53 @@ class BackdropTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class OutputPipelineTests(unittest.TestCase):
+    """The six outputs the Windows run.py pipeline must classify (patches.hud_canvas)."""
+
+    CASES = {
+        '1920x1080': (None, None),
+        '2560x1440': (None, None),
+        '1280x800': ('1280x800', None),
+        '2560x1080': ('2560x1080', 2560),
+        '3440x1440': ('2580x1080', 2580),
+        '5120x1440': ('3840x1080', 3840),
+    }
+
+    def test_ui_viewport_and_hud_canvas(self):
+        for output, (ui_res, canvas_width) in self.CASES.items():
+            with self.subTest(output=output):
+                size = tuple(int(value) for value in output.split('x'))
+                wide = ultrawide(size)
+                if size[0] * 9 == size[1] * 16:
+                    self.assertIsNone(ui_res)  # run.py leaves BB_UI_RES unset
+                elif wide:
+                    canvas = hud_canvas(size)
+                    self.assertEqual(f'{canvas[0]}x{canvas[1]}', ui_res)
+                    self.assertEqual(canvas[0], canvas_width)
+                else:
+                    self.assertEqual(output, ui_res)  # the output is the movie viewport
+
+    def test_render_size_stays_below_each_output(self):
+        expected_quality = {
+            '2560x1440': (1706, 960),
+            '1280x800': (854, 534),
+            '2560x1080': (1706, 720),
+            '3440x1440': (2294, 960),
+            '5120x1440': (3414, 960),
+        }
+        for output in self.CASES:
+            for preset in ('0', '1', '2', '3', '4'):
+                with self.subTest(output=output, preset=preset):
+                    sizes = scaled_sizes({'upscaler': 'fsr3', 'preset': preset,
+                                          'output_res': output})
+                    if output == '1920x1080':
+                        self.assertIsNone(sizes)  # native live host targets
+                        continue
+                    render, out = sizes
+                    self.assertEqual(out, tuple(int(v) for v in output.split('x')))
+                    self.assertLessEqual(render[0], out[0])
+                    self.assertLessEqual(render[1], out[1])
+                    if preset == '1':
+                        self.assertEqual(render, expected_quality[output])

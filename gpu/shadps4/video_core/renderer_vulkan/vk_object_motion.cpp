@@ -51,6 +51,22 @@ bool CreateBuffer(const Instance& instance, vk::DeviceSize size, bool host, vk::
 
 ObjectMotion::ObjectMotion(const Instance& instance_, Scheduler& scheduler_)
     : instance{instance_}, scheduler{scheduler_} {
+    // AMD before RDNA3 (RX 6000 and older, device ids below 0x7440): the GPU is lost at the first
+    // frame of the world with object motion on (RX 6600, 6650 XT, 6700 XT, 6900 XT), also with
+    // its stores made plain. Off there unless BB_OBJECT_MOTION=1 asks for it; the upscalers work
+    // without it, with motion from the camera only. The capability is recorded in the settings,
+    // so the menu cannot report or enable the path on this GPU.
+    const auto props = instance.GetPhysicalDevice().getProperties();
+    const char* forced = std::getenv("BB_OBJECT_MOTION");
+    const bool supported = !(props.vendorID == 0x1002 && props.deviceID < 0x7440 &&
+                             !(forced && forced[0] == '1'));
+    BbSettings::ConfigureObjectMotionSupport(
+        supported, "off on this AMD GPU (RX 6000 and older lose the device with it; "
+                   "BB_OBJECT_MOTION=1 turns it on)");
+    if (!supported) {
+        std::printf("Object motion: %s\n", BbSettings::Get().object_motion_problem.load());
+        return;
+    }
     // Pipeline selection limits the extra attachment and vertex stores to likely
     // animated draws. A setting or environment override can still disable the path.
     if (!BbSettings::Get().object_motion ||
@@ -60,18 +76,9 @@ ObjectMotion::ObjectMotion(const Instance& instance_, Scheduler& scheduler_)
     }
     const auto& features = instance.GetPhysicalDevice().getFeatures();
     if (!features.vertexPipelineStoresAndAtomics) {
-        std::printf("Object motion: vertexPipelineStoresAndAtomics unsupported, off\n");
-        return;
-    }
-    // AMD before RDNA3 (RX 6000 and older, device ids below 0x7440): the GPU is lost at the first
-    // frame of the world with object motion on (RX 6600, 6650 XT, 6700 XT, 6900 XT), also with
-    // its stores made plain. Off there unless BB_OBJECT_MOTION=1 asks for it; the upscalers work
-    // without it, with motion from the camera only.
-    const auto props = instance.GetPhysicalDevice().getProperties();
-    const char* forced = std::getenv("BB_OBJECT_MOTION");
-    if (props.vendorID == 0x1002 && props.deviceID < 0x7440 && !(forced && forced[0] == '1')) {
-        std::printf("Object motion: off on this AMD GPU (RX 6000 and older lose the device with it; "
-                    "BB_OBJECT_MOTION=1 turns it on)\n");
+        BbSettings::ConfigureObjectMotionSupport(
+            false, "vertexPipelineStoresAndAtomics unsupported, off");
+        std::printf("Object motion: %s\n", BbSettings::Get().object_motion_problem.load());
         return;
     }
     void* mapped = nullptr;

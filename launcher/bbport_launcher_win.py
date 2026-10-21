@@ -34,13 +34,61 @@ import zipfile
 FROZEN = getattr(sys, 'frozen', False)
 PORT_DIR = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PORT_DIR / 'scripts'))
-DATA_DIR = Path(os.environ.get('BB_DATA_DIR', PORT_DIR))
+DATA_DIR = Path(os.environ.get('BB_DATA_DIR') or PORT_DIR)
 # Co-op test build: its own settings, and no updates (a public release would replace it).
 COOP_TEST = False
-CONFIG_DIR = Path(os.environ.get('APPDATA', Path.home())) / ('bbport-launcher-coop' if COOP_TEST else 'bbport-launcher')
+CONFIG_DIR = Path(os.environ.get('APPDATA') or Path.home()) / ('bbport-launcher-coop' if COOP_TEST else 'bbport-launcher')
 CONFIG_FILE = CONFIG_DIR / 'settings.json'
 PATCH_VERSION = '01.09'
 MAX_LOG_LINES = 6000
+
+
+def debug_log(message):
+    """BB_LAUNCHER_DEBUG=1: append launcher lifecycle diagnostics to the config folder."""
+    if not os.environ.get('BB_LAUNCHER_DEBUG'):
+        return
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        with open(CONFIG_DIR / 'launcher-debug.log', 'a', encoding='utf-8') as file:
+            file.write(f'{time.strftime("%H:%M:%S")} {message}\n')
+    except OSError:
+        pass
+
+
+def running_under_wine():
+    """Whether this Windows process is Wine (including Proton), not native Windows."""
+    if sys.platform != 'win32':
+        return False
+    try:
+        ntdll = ctypes.windll.ntdll
+        ntdll.wine_get_version.restype = ctypes.c_char_p
+        if ntdll.wine_get_version():
+            return True
+    except (AttributeError, OSError):
+        pass
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r'Software\Wine'):
+            return True
+    except (ImportError, OSError):
+        return False
+
+
+def configure_renderer(environ=None, wine=None):
+    """Choose a Qt Quick backend that presents page changes under Wine.
+
+    Wine's Direct3D11 RHI path presents only on a native window event (resize/fullscreen):
+    QML page changes update the scene but the old frame stays on screen. OpenGL presents them
+    normally. Native Windows keeps the default (D3D11); an explicit backend choice wins."""
+    env = os.environ if environ is None else environ
+    under_wine = running_under_wine() if wine is None else wine
+    if under_wine and not env.get('QSG_RHI_BACKEND') and not env.get('QT_QUICK_BACKEND'):
+        env['QSG_RHI_BACKEND'] = 'opengl'
+        debug_log('renderer: Wine detected; QSG_RHI_BACKEND=opengl '
+                  '(D3D11 stalls QML page updates until a resize)')
+    return env.get('QSG_RHI_BACKEND')
+
+
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 # This fork's build; the release tag includes this version.
 VERSION = '1.9.7'
@@ -392,27 +440,172 @@ def fsr4_files():
     return files
 
 
+def validate_spirv(path):
+    """A complete SPIR-V module: at least one header word, word-aligned, known magic."""
+    try:
+        path = Path(path)
+        size = path.stat().st_size
+        if not path.is_file() or size < 20 or size % 4:
+            return False
+        with path.open('rb') as file:
+            return file.read(4) in (b'\x03\x02\x23\x07', b'\x07\x23\x02\x03')
+    except OSError:
+        return False
+
+
+def validate_fsr4_file(path):
+    """Whether an FSR 4 asset is complete: the right size for its kind and a valid SPIR-V header.
+
+    A download interrupted midway used to count as installed because the file existed."""
+    path = Path(path)
+    if not path.is_file():
+        return False
+    try:
+        size = path.stat().st_size
+        if size == 0:
+            return False
+        name = path.name
+        if name.endswith('.spv'):
+            return validate_spirv(path)
+        if name.endswith('_initializers.bin'):
+            return size == 89216
+        if name.endswith('_pre_weights.bin'):
+            return size == 1024
+        if name.endswith('_shader_manifest.json'):
+            data = json.loads(path.read_text(encoding='utf-8'))
+            return isinstance(data, dict) and bool(data)
+        if name == 'LICENSE-FSR4-v07.txt':
+            content = path.read_text(encoding='utf-8', errors='ignore')
+            return any(mark in content for mark in ('FidelityFX', 'AMD', 'MIT'))
+        return True
+    except (OSError, ValueError):
+        return False
+
+
 def fsr4_missing():
     folder = PORT_DIR / 'fsr4_shaders'
-    return [name for name in fsr4_files() if not (folder / name).is_file() or not (folder / name).stat().st_size]
+    return [name for name in fsr4_files() if not validate_fsr4_file(folder / name)]
+
+
+def fsr411_problem(directory, output, preset):
+    """The FSR 4.1.1 model file a selected output and preset need but is missing or damaged."""
+    try:
+        w, h = (int(value) for value in str(output).lower().split('x'))
+        preset = int(preset)
+    except (TypeError, ValueError):
+        return None
+    model = ('t2160' if w > 1920 or h > 1080 else 't1080') + ('_m1' if preset == 4 else '_m0')
+    passes = ['spd', 'prepass', 'pass0_post']
+    for i in range(1, 13):
+        passes.extend([f'pass{i}', f'pass{i}_post'])
+    passes.extend(['postpass', 'rcas'])
+    for name in passes:
+        if not validate_spirv(Path(directory) / model / (name + '.spv')):
+            return f'{model}/{name}.spv'
+    path = Path(directory) / model / 'initializer.bin'
+    try:
+        if path.stat().st_size != 131072:
+            return f'{model}/initializer.bin'
+    except OSError:
+        return f'{model}/initializer.bin'
+    return None
+
+
+def fsr4_gpu_supported():
+    """True/False from bb-gpu-capabilities --fsr4; None when the checker is not available."""
+    for exe in (PORT_DIR / 'bin' / 'bb-gpu-capabilities.exe', PORT_DIR / 'out' / 'bb-gpu-capabilities.exe'):
+        if not exe.is_file():
+            continue
+        try:
+            result = subprocess.run([str(exe), '--fsr4'], stdin=subprocess.DEVNULL,
+                                    capture_output=True, text=True, timeout=30, creationflags=NO_WINDOW)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        if lines and lines[-1] in ('0', '1'):
+            return lines[-1] == '1'
+        return result.returncode == 0
+    return None
+
+
+def expanded_path(value):
+    """A folder as the game will see it: `~` and Windows `%VARIABLE%` expanded."""
+    return str(Path(os.path.expandvars(os.path.expanduser(str(value)))))
+
+
+def setting_value(key, value):
+    """`value` as the launcher uses it, or None when it is not usable for `key`."""
+    default = APP_DEFAULTS[key]
+    if isinstance(default, bool):
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, int) and value in (0, 1):
+            return bool(value)
+        return None
+    if isinstance(default, str):
+        if isinstance(value, str):
+            return value
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return str(value)
+        return None
+    return value
+
+
+def validated_settings(saved):
+    """Defaults plus the saved settings that have a usable type; unknown keys are kept."""
+    settings = dict(APP_DEFAULTS)
+    for key, value in (saved or {}).items():
+        if key not in APP_DEFAULTS:
+            settings[key] = value
+            continue
+        usable = setting_value(key, value)
+        if usable is not None:
+            settings[key] = usable
+    return settings
+
+
+def load_app_settings():
+    return validated_settings(load_json(CONFIG_FILE, {}))
 
 
 def load_json(path, default):
     try:
-        return json.loads(Path(path).read_text(encoding='utf-8'))
-    except (OSError, ValueError):
+        value = json.loads(Path(path).read_text(encoding='utf-8', errors='replace'))
+    except (OSError, ValueError, TypeError):
         return default
+    return value if isinstance(value, type(default)) else default
+
+
+def atomic_write_text(path, text):
+    """Writes through a temporary file in the destination directory, then replaces `path`.
+
+    A crash or a full disk leaves the previous file intact instead of a truncated one."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(dir=path.parent, prefix=f'.{path.name}.', suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8', newline='') as temp:
+            temp.write(text)
+            temp.flush()
+            os.fsync(temp.fileno())
+        os.replace(temp_name, path)
+    except BaseException:
+        try:
+            os.unlink(temp_name)
+        except OSError:
+            pass
+        raise
 
 
 def ini_path():
-    return Path(os.environ.get('BB_CONFIG', DATA_DIR / 'bbport.ini'))
+    return Path(os.environ.get('BB_CONFIG') or DATA_DIR / 'bbport.ini')
 
 
 def load_ini():
     values, lines = dict(INI_DEFAULTS), []
     try:
-        lines = ini_path().read_text(encoding='utf-8').splitlines()
-    except OSError:
+        lines = ini_path().read_text(encoding='utf-8', errors='replace').splitlines()
+    except (OSError, ValueError):
         pass
     for line in lines:
         if '=' in line and not line.lstrip().startswith('#'):
@@ -435,12 +628,12 @@ def save_ini(values, lines):
     if not lines:
         out.append('# bbport settings (in-game menu: Insert / L3+R3)')
     out += [f'{key}={value}' for key, value in values.items() if key not in written]
-    ini_path().write_text('\n'.join(out) + '\n', encoding='utf-8')
+    atomic_write_text(ini_path(), '\n'.join(out) + '\n')
 
 
 def game_info(folder):
     """(title, app version) of a game folder, or None without eboot.bin."""
-    folder = Path(folder or '.')
+    folder = Path(expanded_path(folder or '.'))
     if not (folder / 'eboot.bin').is_file():
         return None
     try:
@@ -643,15 +836,15 @@ def game_environment(s):
     env = dict(os.environ)
     env['BB_PORT_VERSION'] = VERSION
     env['BB_CLIENT_VERSION'] = CLIENT_VERSION  # what shadNet and The Hunter's Dream see
-    env['BB_GAME_DIR'] = s['game_dir']
+    env['BB_GAME_DIR'] = expanded_path(s['game_dir'])
     if s['user_dir']:
-        env['BB_USER_DIR'] = s['user_dir']
+        env['BB_USER_DIR'] = expanded_path(s['user_dir'])
     if s['dlc_dir']:
-        env['BB_DLC_DIR'] = s['dlc_dir']
-    env['BB_MODS_DIR'] = s['mods_dir'] or str(DATA_DIR / 'mods')
+        env['BB_DLC_DIR'] = expanded_path(s['dlc_dir'])
+    env['BB_MODS_DIR'] = expanded_path(s['mods_dir'] or DATA_DIR / 'mods')
     env['BB_MODS_CONFIG'] = str(DATA_DIR / 'mods.json')
     env['BB_MODS_ENABLED'] = '1' if s['mods_enabled'] else '0'
-    env['BB_PATCHES_DIR'] = s['patches_dir'] or str(DATA_DIR / 'patches')
+    env['BB_PATCHES_DIR'] = expanded_path(s['patches_dir'] or DATA_DIR / 'patches')
     env['BB_PATCHES_CONFIG'] = str(DATA_DIR / 'patches.json')
     env['BB_LANGUAGE'] = s['language']
     if str(s['player_name']).strip():
@@ -722,7 +915,7 @@ class Launcher:
     def __init__(self, root, tk, ttk, filedialog, messagebox):
         self.tk, self.ttk, self.filedialog, self.messagebox = tk, ttk, filedialog, messagebox
         self.root = root
-        self.app = {**APP_DEFAULTS, **load_json(CONFIG_FILE, {})}
+        self.app = load_app_settings()
         self.ini, self.ini_lines = load_ini()
         self.vars = {}
         self.process = self.job = None
@@ -867,7 +1060,11 @@ class Launcher:
                 if key in INI_FLAGS:
                     v = tk.BooleanVar(value=value == '1')
                 elif key == 'sharpness':
-                    v = tk.DoubleVar(value=float(value or 0.5))
+                    try:
+                        number = float(value)
+                    except (TypeError, ValueError):
+                        number = float(INI_DEFAULTS['sharpness'])
+                    v = tk.DoubleVar(value=max(0.0, min(2.0, number)))
                 else:
                     v = tk.StringVar(value=value)
             else:
@@ -881,12 +1078,19 @@ class Launcher:
         return self.vars[key]
 
     def choice(self, parent, key, store, options, width=38):
-        """A combobox over (value, (english, russian)) pairs, kept in sync with its variable."""
+        """A combobox over (value, (english, russian)) pairs, kept in sync with its variable.
+
+        A value the list does not know (written by the in-game menu or a newer version) stays
+        selected and is written back unchanged; it never silently becomes the first option."""
         var = self.var(key, store)
-        values = [v for v, _t in options]
-        box = self.ttk.Combobox(parent, values=[_(*text) for _v, text in options],
-                               state='normal' if key == 'output_res' else 'readonly', width=width)
-        if var.get() not in values and key != 'output_res':
+        pairs = [(str(value), text) for value, text in options]
+        current = var.get()
+        if current not in [value for value, _text in pairs] and current != '':
+            pairs.append((current, (str(current),)))
+        values = [value for value, _text in pairs]
+        box = self.ttk.Combobox(parent, values=[_(*text) for _value, text in pairs],
+                                state='normal' if key == 'output_res' else 'readonly', width=width)
+        if var.get() not in values:
             var.set(values[0])
 
         def show(*_args):
@@ -1844,7 +2048,8 @@ class Launcher:
         else:
             game = _('⚠ Game version {}: runs at 30 FPS without the community patches (they are for 1.09)',
                      '⚠ Версия игры {}: 30 FPS без патчей сообщества (они для 1.09)').format(info[1])
-        user = Path(self.var('user_dir', 'app').get() or DATA_DIR / 'user')
+        user_dir = self.var('user_dir', 'app').get()
+        user = Path(expanded_path(user_dir)) if user_dir else DATA_DIR / 'user'
         saves = list((user / 'savedata').glob('*/*/SPRJ*')) if (user / 'savedata').is_dir() else []
         save = (_('✓ Saves found', '✓ Сохранения найдены') if saves
                 else _('• No saves yet: the game creates them when you play',
@@ -1901,15 +2106,38 @@ class Launcher:
         except (OSError, subprocess.TimeoutExpired):
             pass
         self.gpu_text = text
+        self.fsr4_gpu = fsr4_gpu_supported() if names else None
         self.ui_calls.put(self.refresh_status)
+
+    def fsr_problem(self):
+        """A warning for the selected upscaler's assets or hardware, or '' when it can run."""
+        upscaler = str(self.ini.get('upscaler', INI_DEFAULTS['upscaler']))
+        if upscaler == 'fsr411':
+            directory = PORT_DIR / 'fsr4_411' if (PORT_DIR / 'fsr4_411').is_dir() else DATA_DIR / 'fsr4_411'
+            if not directory.is_dir():
+                return _('FSR 4.1.1 assets are not installed; the game uses FSR 3.1.')
+            problem = fsr411_problem(directory, self.ini.get('output_res', INI_DEFAULTS['output_res']),
+                                     self.ini.get('preset', INI_DEFAULTS['preset']))
+            return _('FSR 4.1.1 asset missing or damaged: {}. Install the full fsr4_411 set.').format(problem) \
+                if problem else ''
+        if upscaler == 'fsr4':
+            missing = fsr4_missing()
+            if missing:
+                return _('{} of {} FSR 4 assets missing; the game uses FSR 3.1.').format(
+                    len(missing), len(fsr4_files()))
+            if getattr(self, 'fsr4_gpu', None) is False:
+                return _('This GPU does not support the FSR 4 shaders; the game uses FSR 3.1.')
+        return ''
 
     def refresh_fsr4(self):
         total, missing = len(fsr4_files()), len(fsr4_missing())
         self.fsr4_progress.configure(value=total - missing)
+        problem = self.fsr_problem()
         self.fsr4_label.configure(
-            text=_('Installed: {} files in {}.', 'Установлены: {} файлов в {}.').format(total, PORT_DIR / 'fsr4_shaders')
-            if not missing else _('{} of {} files missing in {}.', 'Нет {} из {} файлов в {}.').format(
-                missing, total, PORT_DIR / 'fsr4_shaders'))
+            text=problem or (_('Installed: {} files in {}.', 'Установлены: {} файлов в {}.').format(
+                total, PORT_DIR / 'fsr4_shaders')
+                if not missing else _('{} of {} files missing in {}.', 'Нет {} из {} файлов в {}.').format(
+                    len(missing), total, PORT_DIR / 'fsr4_shaders')))
         self.fsr4_button.configure(state='normal' if missing and not self.downloading else 'disabled')
 
     def download_fsr4(self):
@@ -1919,18 +2147,27 @@ class Launcher:
 
         def work():
             error = None
+            part = None
             try:
                 folder.mkdir(parents=True, exist_ok=True)
                 for name in fsr4_missing():
                     part = folder / (name + '.part')
                     with urllib.request.urlopen(f'{FSR4_BASE}/{name}', timeout=60) as response:
                         part.write_bytes(response.read())
+                    if not validate_fsr4_file(part):
+                        raise ValueError(f'{name} was downloaded incomplete')
                     part.replace(folder / name)
+                    part = None
                     self.ui_calls.put(self.refresh_fsr4)
-            except OSError as failure:
+            except (OSError, ValueError) as failure:
                 error = failure
 
             def done():
+                if part is not None:
+                    try:
+                        part.unlink()
+                    except OSError:
+                        pass
                 self.downloading = False
                 self.refresh_fsr4()
                 self.refresh_status()
@@ -2005,21 +2242,32 @@ class Launcher:
             self.mod_dirty = True
             self.refresh_lists()
 
-    def collect(self):
+    def collect(self, notify=True):
         """Writes settings.json, bbport.ini, mods.json and patches.json."""
+        message = self.messagebox.showerror if notify else (lambda *_args: None)
         for key, var in self.vars.items():
             try:
                 value = var.get()
             except self.tk.TclError:  # an unfinished number in a spinbox
                 value = APP_DEFAULTS.get(key, INI_DEFAULTS.get(key))
             if var.store == 'ini':
-                self.ini[key] = ('1' if value else '0') if key in INI_FLAGS else \
-                    f'{float(value):.2f}' if key == 'sharpness' else str(value)
+                if key in INI_FLAGS:
+                    self.ini[key] = '1' if value else '0'
+                elif key == 'sharpness':
+                    try:
+                        self.ini[key] = f'{max(0.0, min(2.0, float(value))):.2f}'
+                    except (TypeError, ValueError):
+                        self.ini[key] = INI_DEFAULTS['sharpness']
+                else:
+                    self.ini[key] = str(value)
             else:
                 self.app[key] = value
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        CONFIG_FILE.write_text(json.dumps(self.app, indent=2, ensure_ascii=False), encoding='utf-8')
-        save_ini({key: self.ini[key] for key in INI_DEFAULTS}, self.ini_lines)
+        try:
+            atomic_write_text(CONFIG_FILE, json.dumps(self.app, indent=2, ensure_ascii=False))
+            save_ini({key: self.ini[key] for key in INI_DEFAULTS}, self.ini_lines)
+        except OSError as error:
+            message('Bloodborne', _('Settings could not be saved: {}').format(error))
+            return False
         self.ini, self.ini_lines = load_ini()
         if self.mod_order:
             mod_config = DATA_DIR / 'mods.json'
@@ -2030,16 +2278,23 @@ class Launcher:
                 profile = load_json(mod_config, {})
                 profile.update({'order': self.mod_order,
                                 'disabled': [n for n, v in self.mod_vars.items() if not v.get()]})
-                mod_config.write_text(json.dumps(profile, indent=2), encoding='utf-8')
-                self.mod_profile_mtime = mod_config.stat().st_mtime_ns
-                self.mod_dirty = False
+                try:
+                    atomic_write_text(mod_config, json.dumps(profile, indent=2))
+                    self.mod_profile_mtime = mod_config.stat().st_mtime_ns
+                    self.mod_dirty = False
+                except OSError as error:
+                    message('Bloodborne', _('The mod list could not be saved: {}').format(error))
         if self.patch_vars:
             chosen = load_json(DATA_DIR / 'patches.json', {})
             shown = set(self.patch_vars)
             enabled = {k for k in chosen.get('enabled', []) if k not in shown} | {k for k, v in self.patch_vars.items() if v.get()}
             disabled = {k for k in chosen.get('disabled', []) if k not in shown} | {k for k, v in self.patch_vars.items() if not v.get()}
-            (DATA_DIR / 'patches.json').write_text(json.dumps(
-                {'enabled': sorted(enabled), 'disabled': sorted(disabled)}, indent=2), encoding='utf-8')
+            try:
+                atomic_write_text(DATA_DIR / 'patches.json', json.dumps(
+                    {'enabled': sorted(enabled), 'disabled': sorted(disabled)}, indent=2))
+            except OSError as error:
+                message('Bloodborne', _('The patch selection could not be saved: {}').format(error))
+        return True
 
     # ---- game process ------------------------------------------------------------------------
     def play(self):
@@ -2065,7 +2320,8 @@ class Launcher:
                                 'not your email address.'))
             self.show('online')
             return
-        self.collect()
+        if not self.collect():
+            return
         if not game_info(self.app['game_dir']):
             self.messagebox.showerror('Bloodborne', _('Choose the game folder with eboot.bin (CUSA03173).',
                                                       'Выберите папку игры с eboot.bin (CUSA03173).'))
@@ -2092,8 +2348,9 @@ class Launcher:
     def read_output(self, process):
         """Helper thread: the game's output to the Log page and to <saves folder>/last_run.log."""
         log = None
+        user_dir = self.app.get('user_dir')
         try:
-            log = open_run_log(self.app.get('user_dir') or DATA_DIR / 'user')
+            log = open_run_log(expanded_path(user_dir) if user_dir else DATA_DIR / 'user')
         except OSError:
             pass
         warned = False
@@ -2108,10 +2365,21 @@ class Launcher:
                     "some scenes (like the cutscene after Rom) can freeze.\n\nReplace eboot.bin with the one "
                     "from an unmodified 1.09 update.")))
             if log:
-                log.write(text.replace('\r\n', '\n'))
+                try:
+                    log.write(text.replace('\r\n', '\n'))
+                except (OSError, ValueError):
+                    # A full disk must not stop the reader: the exit status still has to arrive.
+                    try:
+                        log.close()
+                    except OSError:
+                        pass
+                    log = None
         if log:
-            log.close()
-        self.output.put((process.wait(),))
+            try:
+                log.close()
+            except OSError:
+                pass
+        self.output.put((process.wait(), process))
 
     def drain_output(self):
         while not self.ui_calls.empty():
@@ -2120,12 +2388,16 @@ class Launcher:
             for _i in range(500):
                 item = self.output.get_nowait()
                 if isinstance(item, tuple):
-                    self.append(_('\n— the game exited (code {}) —\n', '\n— игра завершилась (код {}) —\n').format(item[0]))
-                    self.process = None
-                    if self.job:
-                        self.job.close()
-                    self.stop_button.configure(state='disabled')
-                    self.refresh_status()
+                    code, finished = item
+                    self.append(_('\n— the game exited (code {}) —\n', '\n— игра завершилась (код {}) —\n').format(code))
+                    # A late line from an earlier launch must not clear a newer process.
+                    if self.process is finished:
+                        self.process = None
+                        if self.job:
+                            self.job.close()
+                            self.job = None
+                        self.stop_button.configure(state='disabled')
+                        self.refresh_status()
                 else:
                     if 'Entering original x86-64 code' in item:
                         self.status.configure(text=_('The game is running.', 'Игра запущена.'), fg=GOLD)
@@ -2166,7 +2438,7 @@ class Launcher:
             path = DATA_DIR / 'mods'
         elif key == 'patches_dir' and not path:
             path = DATA_DIR / 'patches'
-        path = Path(path or DATA_DIR)
+        path = Path(expanded_path(path or DATA_DIR))
         if path.suffix == '.ini':
             self.collect()
         elif not path.exists():
@@ -2337,7 +2609,7 @@ class Launcher:
 
     def close(self):
         try:
-            self.collect()
+            self.collect(notify=False)
         except Exception:  # never keep the window open over a settings problem
             pass
         self.root.destroy()
@@ -2345,23 +2617,43 @@ class Launcher:
 
 class GameJob:
     """A Windows job holding run.py and everything it starts: bb-probe.exe and the launches made
-    by the in-game restart (no longer descendants of the first process)."""
+    by the in-game restart (no longer descendants of the first process).
+
+    When the job cannot be created or the process cannot be assigned to it (a launcher already
+    inside a restrictive job on older Windows), Stop falls back to terminating run.py, so the
+    button is never silently dead."""
 
     def __init__(self, process):
+        self.process = process
+        self.handle = None
+        self.assigned = False
         kernel32 = ctypes.windll.kernel32
         kernel32.CreateJobObjectW.restype = ctypes.c_void_p
         self.handle = kernel32.CreateJobObjectW(None, None)
         if self.handle:
-            kernel32.AssignProcessToJobObject(ctypes.c_void_p(self.handle), ctypes.c_void_p(int(process._handle)))
+            self.assigned = bool(kernel32.AssignProcessToJobObject(
+                ctypes.c_void_p(self.handle), ctypes.c_void_p(int(process._handle))))
 
     def terminate(self):
-        if self.handle:
+        if self.handle and self.assigned:
             ctypes.windll.kernel32.TerminateJobObject(ctypes.c_void_p(self.handle), 1)
+            return
+        if self.process is None or self.process.poll() is not None:
+            return
+        # The job is unavailable: end run.py and its game process (taskkill /T follows the
+        # process tree, as the job object would).
+        try:
+            subprocess.run(['taskkill', '/PID', str(self.process.pid), '/T', '/F'],
+                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, creationflags=NO_WINDOW, timeout=10)
+        except (OSError, subprocess.TimeoutExpired):
+            self.process.terminate()
 
     def close(self):
         if self.handle:
             ctypes.windll.kernel32.CloseHandle(ctypes.c_void_p(self.handle))
             self.handle = None
+        self.assigned = False
 
 
 
@@ -2388,7 +2680,8 @@ def play_without_window(settings):
     when there is one and to <saves folder>/last_run.log."""
     attach_stdio()
     start_quiet_update_check(settings)
-    with open_run_log(settings.get('user_dir') or DATA_DIR / 'user') as log:
+    user_dir = settings.get('user_dir')
+    with open_run_log(expanded_path(user_dir) if user_dir else DATA_DIR / 'user') as log:
         process = subprocess.Popen(run_command(), cwd=PORT_DIR, env=game_environment(settings),
                                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
@@ -2506,23 +2799,31 @@ def main():
     args = sys.argv[1:]
     if args and args[0] in ('--run', '--script'):
         sys.exit(run_role(args))
+    configure_renderer()  # before Qt Quick imports: Wine needs the OpenGL backend
     import bbport_startup
     keys_held = bbport_startup.launcher_keys_held()  # read first: the user may let go soon
     saved = load_json(CONFIG_FILE, {})
-    settings = {**APP_DEFAULTS, **saved}
+    settings = validated_settings(saved)
+    debug_log(f'main args={args!r} frozen={FROZEN} appdata={os.environ.get("APPDATA")!r} '
+              f'config={CONFIG_FILE} data={DATA_DIR} game_dir={settings.get("game_dir")!r} '
+              f'launchDirectly={settings.get("launchDirectly")!r} '
+              f'setupCompleted={settings.get("setupCompleted")!r}')
     if bbport_startup.migrate(saved, settings):
+        # Keep what the migration added; unusable values are normalized on the way out.
+        for key in ('setupCompleted', 'setupSkipped', 'setupVersion', 'launchDirectly'):
+            if key in saved:
+                settings[key] = saved[key]
         try:
-            CONFIG_FILE.write_text(json.dumps(saved, indent=2, ensure_ascii=False), encoding='utf-8')
+            atomic_write_text(CONFIG_FILE, json.dumps(settings, indent=2, ensure_ascii=False))
         except OSError:
             pass
-        settings = {**APP_DEFAULTS, **saved}
     LANG = settings.get('ui_language') or windows_language()
     if args[:1] == ['--install-update'] and len(args) == 3:
         sys.exit(install_update(args[1], args[2]))
     if FROZEN and UPDATE_DIR not in PORT_DIR.parents:
         shutil.rmtree(UPDATE_DIR, ignore_errors=True)  # what a finished update left behind
     # Without a usable game folder there is nothing to play yet: open the launcher instead.
-    if '--play' in args and (Path(settings['game_dir'] or '.') / 'eboot.bin').is_file():
+    if '--play' in args and (Path(expanded_path(settings['game_dir'] or '.')) / 'eboot.bin').is_file():
         sys.exit(play_without_window(settings))
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(1)  # sharp text on scaled displays
@@ -2540,7 +2841,9 @@ def main():
                 pass
             print(f'Qt Quick unavailable; opening classic launcher: {error}', file=sys.stderr)
         else:
-            sys.exit(run_ui(bbport_startup.route(settings, args, DATA_DIR, keys_held)))
+            route = bbport_startup.route(settings, args, DATA_DIR, keys_held)
+            debug_log(f'route={route!r}')
+            sys.exit(run_ui(route))
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
     root = tk.Tk()

@@ -64,8 +64,47 @@ static int live_resolution_suits(VkPhysicalDevice device) {
     return suits;
 }
 
+static int fsr4_suits(VkPhysicalDevice device) {
+    VkPhysicalDeviceProperties props;
+    vkGetPhysicalDeviceProperties(device, &props);
+
+    if (props.apiVersion < VK_API_VERSION_1_3) {
+        fprintf(stderr, "GPU: %s lacks Vulkan 1.3 for FSR 4\n", props.deviceName);
+        return 0;
+    }
+
+    VkPhysicalDeviceComputeShaderDerivativesFeaturesKHR derivatives = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COMPUTE_SHADER_DERIVATIVES_FEATURES_KHR,
+    };
+    VkPhysicalDeviceVulkan13Features f13 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+        .pNext = &derivatives,
+    };
+    VkPhysicalDeviceVulkan12Features f12 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+        .pNext = &f13,
+    };
+    VkPhysicalDeviceFeatures2 features = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+        .pNext = &f12,
+    };
+
+    vkGetPhysicalDeviceFeatures2(device, &features);
+
+    const int has_derivatives = has_extension(device, "VK_KHR_compute_shader_derivatives");
+    const int supported = f12.shaderFloat16 && f12.shaderInt8 && features.features.shaderInt16 &&
+                          features.features.shaderStorageImageExtendedFormats &&
+                          f13.shaderIntegerDotProduct && has_derivatives &&
+                          derivatives.computeDerivativeGroupLinear;
+
+    fprintf(stderr, "GPU: %s FSR 4 v07 INT8 support: %s\n", props.deviceName,
+            supported ? "supported" : "unsupported");
+    return supported ? 1 : 0;
+}
+
 int main(int argc, char **argv) {
     const int live_mode = argc > 1 && !strcmp(argv[1], "--live-resolution");
+    const int fsr4_mode = argc > 1 && !strcmp(argv[1], "--fsr4");
     const VkApplicationInfo app = {
         .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
         .pApplicationName = "bbport scene scaling probe",
@@ -111,6 +150,12 @@ int main(int argc, char **argv) {
     }
     if (live_mode) {
         printf("%d\n", live_resolution_suits(selected));
+        free(devices);
+        vkDestroyInstance(instance, NULL);
+        return 0;
+    }
+    if (fsr4_mode) {
+        printf("%d\n", fsr4_suits(selected));
         free(devices);
         vkDestroyInstance(instance, NULL);
         return 0;

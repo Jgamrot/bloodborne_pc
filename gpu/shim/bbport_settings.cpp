@@ -57,7 +57,7 @@ void Set(Values& v, const std::string& key, const std::string& value) {
     } else if (key == "reactive") {
         v.reactive = i != 0;
     } else if (key == "object_motion") {
-        v.object_motion = i != 0;
+        v.object_motion = i != 0 && v.object_motion_supported.load();
     } else if (key == "reactive_scale") {
         v.reactive_scale = Clamp(f, 0.0f, 16.0f);
     } else if (key == "reactive_threshold") {
@@ -178,6 +178,8 @@ void Load() {
     v.startup_model_lod = v.model_lod;
     v.startup_output_res = v.output_res;
     v.startup_live_resolution = v.live_resolution;
+    v.active_upscaler = v.upscaler.load();
+    v.upscaler_fallback_reason = nullptr;
 }
 
 void ConfigureUpscalerSupport(bool fsr4, bool fsr411) {
@@ -187,10 +189,31 @@ void ConfigureUpscalerSupport(bool fsr4, bool fsr411) {
     const int requested = v.upscaler;
     if ((requested == UpscalerFsr4 && !v.fsr4_supported) ||
         (requested == UpscalerFsr411 && !v.fsr411_supported)) {
-        v.fsr4_problem = "GPU does not support the selected FSR 4 shaders; using FSR 3.1";
-        std::printf("Upscaler: %s unsupported on this GPU; falling back to FSR 3.1 before the first frame\n",
+        v.fsr4_problem = "GPU lacks required FSR 4 shader features; falling back to FSR 3.1";
+        v.upscaler_fallback_reason = "GPU lacks required FSR 4 shader features; falling back to FSR 3.1";
+        std::printf("Upscaler: %s unsupported on this GPU; using FSR 3.1 fallback before the first frame\n",
                     UpscalerName(requested));
-        v.upscaler = UpscalerFsr3;
+        v.active_upscaler = UpscalerFsr3;
+    } else {
+        v.active_upscaler = requested;
+        v.upscaler_fallback_reason = nullptr;
+    }
+}
+
+bool Fsr4ImplementationNeededForRecord(int active_upscaler, bool supported, bool failed,
+                                       bool have_implementation) {
+    return IsFsr4(active_upscaler) && supported && !failed && !have_implementation;
+}
+
+void ConfigureObjectMotionSupport(bool supported, const char* problem) {
+    auto& v = Get();
+    static std::string kept;
+    kept = problem ? problem : "";
+    v.object_motion_supported = supported;
+    v.object_motion_problem = supported || kept.empty() ? nullptr : kept.c_str();
+    if (!supported) {
+        v.object_motion = false;
+        v.startup_object_motion = false; // no "restart to apply" for a path that cannot run
     }
 }
 
@@ -201,9 +224,13 @@ void ConfigureDlssSupport(bool available, const char* problem) {
     kept = problem ? problem : "";
     v.dlss_problem = available || kept.empty() ? nullptr : kept.c_str();
     if (v.upscaler == UpscalerDlss && !available) {
-        std::printf("Upscaler: DLSS unavailable (%s); falling back to FSR 3.1\n",
+        v.upscaler_fallback_reason = "DLSS unavailable on this hardware; falling back to FSR 3.1";
+        std::printf("Upscaler: DLSS unavailable (%s); using FSR 3.1 fallback\n",
                     kept.empty() ? "bbport_dlss.dll or nvngx_dlss.dll missing" : kept.c_str());
-        v.upscaler = UpscalerFsr3;
+        v.active_upscaler = UpscalerFsr3;
+    } else if (v.upscaler == UpscalerDlss) {
+        v.active_upscaler = UpscalerDlss;
+        v.upscaler_fallback_reason = nullptr;
     }
 }
 
@@ -357,9 +384,23 @@ void SetFullscreen(bool on) {
 #else
     setenv("BB_FULLSCREEN", on ? "1" : "0", 1);
 #endif
+#ifdef _WIN32
     const char* appdata = std::getenv("APPDATA");
     if (!appdata) return;
     const std::filesystem::path file = std::filesystem::path(appdata) / "bbport-launcher" / "settings.json";
+#else
+    // The same directory as launcher/bbport_launcher.py (XDG_CONFIG_HOME or ~/.config).
+    const char* config = std::getenv("XDG_CONFIG_HOME");
+    std::filesystem::path directory;
+    if (config && config[0]) {
+        directory = config;
+    } else {
+        const char* home = std::getenv("HOME");
+        if (!home || !home[0]) return;
+        directory = std::filesystem::path(home) / ".config";
+    }
+    const std::filesystem::path file = directory / "bbport-launcher" / "settings.json";
+#endif
     std::ifstream in(file);
     if (!in) return;
     nlohmann::json root = nlohmann::json::parse(in, nullptr, false);
@@ -386,6 +427,8 @@ extern "C" void bbgpu_setting_set(const char* key, int value) {
     std::string text = std::to_string(value);
     if (k == "upscaler") {
         text = UpscalerName(value);
+        Get().active_upscaler = value;
+        Get().upscaler_fallback_reason = nullptr;
     } else if (k == "output_res") {
         const int r = std::clamp(value, 0, OutputCount - 1);
         text = std::to_string(OutputWidths[r]) + "x" + std::to_string(OutputHeights[r]);
@@ -394,6 +437,18 @@ extern "C" void bbgpu_setting_set(const char* key, int value) {
     }
     Set(Get(), k, text);
     Save();
+}
+
+extern "C" void bbgpu_settings_save(void) {
+    BbSettings::Save();
+}
+
+extern "C" int bbgpu_active_upscaler(void) {
+    return BbSettings::Get().active_upscaler.load();
+}
+
+extern "C" const char* bbgpu_upscaler_fallback_reason(void) {
+    return BbSettings::Get().upscaler_fallback_reason.load();
 }
 
 // Whether this GPU runs an upscaler (the menu offers only those).

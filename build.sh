@@ -104,4 +104,15 @@ if [[ ${1:-} == --test ]]; then
     out/sema-test
     "$CC" -std=c11 -D_GNU_SOURCE -O2 -g -Wall -Wextra -Werror -I. -Isrc tests/test_content.c src/runtime_content.c -o out/content-test
     out/content-test
+    if CXX=$(command -v c++ || command -v g++); then
+        "$CXX" -std=c++17 -O2 -g -Wall -Wextra -Werror -Igpu/shim -Igpu \
+            tests/test_bbport_settings.cpp gpu/shim/bbport_settings.cpp -o out/settings-test
+        out/settings-test
+    else
+        echo 'No C++ compiler; object-motion settings test skipped' >&2
+    fi
+    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_engine_hooks.c src/engine_hooks.c -o out/engine-hooks-test
+    out/engine-hooks-test
+    ninja -C out/gpu frame-limiter-test
+    out/gpu/frame-limiter-test
 fi

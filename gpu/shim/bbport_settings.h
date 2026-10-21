@@ -15,6 +15,11 @@ enum Upscaler : int { UpscalerOff = 0, UpscalerFsr3 = 1, UpscalerFsr4 = 2, Upsca
 inline bool IsFsr4(int upscaler) {
     return upscaler == UpscalerFsr4 || upscaler == UpscalerFsr411;
 }
+/// The dispatch path can run before OnFrameStart after the menu selects FSR 4, when the
+/// implementation was released for another provider: create it then. False when FSR 4 is not
+/// the active provider, the GPU cannot run it, it already failed fatally, or it exists already.
+bool Fsr4ImplementationNeededForRecord(int active_upscaler, bool supported, bool failed,
+                                       bool have_implementation);
 enum Preset : int { NativeAA = 0, Quality, Balanced, Performance, UltraPerformance, PresetCount };
 enum DebugView : int { DebugNone = 0, DebugReactive = 1, DebugMotion = 2, DebugViewCount };
 /// Frame generation (vk_frame_generation.h): frames generated between two of the game's.
@@ -70,12 +75,19 @@ inline constexpr int OutputDefault = 1; ///< 1920x1080, the game's own size
 
 struct Values {
     std::atomic<int> upscaler{UpscalerFsr3};
+    /// The actual upscaler in active runtime use by the renderer (may differ from upscaler on fallback)
+    std::atomic<int> active_upscaler{UpscalerFsr3};
+    std::atomic<const char*> upscaler_fallback_reason{nullptr};
     std::atomic<int> preset{NativeAA};
     std::atomic<bool> sharpen{true};
     std::atomic<float> sharpness{0.3f};
     std::atomic<bool> jitter{true};
     std::atomic<bool> reactive{false};
     std::atomic<bool> object_motion{true};
+    /// False where the renderer refuses object motion (AMD before RDNA3); the menu and the
+    /// config cannot enable it then. BB_OBJECT_MOTION=1 keeps the diagnostic override.
+    std::atomic<bool> object_motion_supported{true};
+    std::atomic<const char*> object_motion_problem{nullptr};
     std::atomic<float> reactive_scale{1.0f};
     std::atomic<float> reactive_threshold{0.2f};
     std::atomic<float> reactive_max{0.9f};
@@ -147,6 +159,8 @@ Values& Get();
 void Load();
 /// Checks the loaded choice before the first frame; unsupported FSR 4 uses FSR 3.1.
 void ConfigureUpscalerSupport(bool fsr4, bool fsr411);
+/// The renderer's object-motion availability: clears the setting where it is refused.
+void ConfigureObjectMotionSupport(bool supported, const char* problem);
 /// After device creation: DLSS availability; a DLSS setting falls back to FSR 3.1 without it.
 void ConfigureDlssSupport(bool available, const char* problem);
 /// Startup-patched scene dimensions cannot change until run.sh prepares a new image.

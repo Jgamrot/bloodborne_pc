@@ -9,7 +9,7 @@ and the [shadPS4](https://github.com/shadps4-emu/shadPS4) renderer.
 > **No game files are included.** You need your own dump of Bloodborne. This project is not
 > affiliated with Sony Interactive Entertainment or FromSoftware.
 
-![The launcher](docs/images/launcher.jpg)
+![The launcher overview](docs/images/launcher-overview.jpg)
 
 ## Download
 
@@ -23,8 +23,10 @@ of upcoming features are marked *Pre-release* on the
 
 **Launcher and setup**
 - A setup wizard on first start that installs the game from your own ZIP or PKG dump, checks
-  the game files, saves and trophy key, and can be reopened from **Game → Setup wizard**.
-- Every setting in one place: graphics, display, game, controller, cheats, online and mods.
+  the game files, saves and trophy key, and can be reopened from **Game & saves → Setup wizard**.
+- Named pages: Overview, Graphics, Display, Game & saves, Mods & patches, Online, System and Diagnostics.
+- Every setting from the old launcher is still available; startup options are marked as applying at the next launch.
+- A live Diagnostics page shows process state, exit code, runtime facts, paths and the session log (copy, save or clear).
 - `Play Bloodborne.exe` starts the game straight away with your saved settings.
 - Update notifications for full releases.
 
@@ -38,7 +40,7 @@ of upcoming features are marked *Pre-release* on the
   The included catalog covers the game up to the Blood-starved Beast so far; it lists shaders,
   not game code, and each install builds them from its own files. Off with `BB_SHADER_PREBUILD=0`.
 
-![Settings: Visuals](docs/images/settings.jpg)
+![Graphics and upscaling](docs/images/launcher-graphics.jpg)
 
 **In the game**
 - PC settings in the game's own System menu: PC Graphics, Display, Effects, Settings and
@@ -50,13 +52,13 @@ of upcoming features are marked *Pre-release* on the
 - Controller, and keyboard and mouse at the same time, with rebindable keys
   (`key_<action>=` lines in `bbport.ini`).
 - Mouse camera: click the game window and the mouse turns the camera 1:1. Sensitivity and
-  invert Y are in **Settings > Controls > Mouse**.
+  invert Y are in **Game & saves → Mouse**.
 - Keyboard movement smoothing: changing direction with WASD swings smoothly instead of
-  stopping for a moment (**Settings > Controls > Keyboard**, *Off* to disable).
+  stopping for a moment (**Game & saves → Keyboard**, *Off* to disable).
 - Button prompts: PlayStation, Xbox (included) or keyboard keys (see below), switchable in the
   launcher and the guide.
 
-**Optional enhancements** (off by default; switch them on in the launcher's **Mods** page or
+**Optional enhancements** (off by default; switch them on in the launcher's **Mods & patches** page or
 the guide. They are made from your own game files at start, which stay unchanged.)
 - **Lamps: Level Up and Storage** (`pc_enhanced_lamps`): every lit lamp also offers the game's
   own level-up and storage screens, once you have used the Doll and the storage box.
@@ -84,18 +86,18 @@ What changed in each release: [docs/CHANGELOG.md](docs/CHANGELOG.md).
    from inside the zip.
 2. Double-click **Bloodborne.exe**. The setup wizard opens on a new install; **Skip setup** goes
    straight to the launcher.
-3. In the wizard's **Game** step, either:
+3. In the wizard's **Game files** step, either:
    - click **Install from ZIP / PKG** and choose your dump (for example `cusa-03173.zip`) and a
      destination such as `C:\Games\Bloodborne`. The base game and the plain 1.09 update are
      extracted into `CUSA03173`; allow about 70 GB free for a 30 GB archive. Or
-   - click **Choose existing game folder** and pick the folder with `eboot.bin` directly inside.
+   - click **Choose a game folder** and pick the folder with `eboot.bin` directly inside.
 4. On **Your data**, optionally import your own `keys.json` (for achievement names) or choose an
    existing saves folder. The checks turn green when the game folder has version 1.09; amber is
    normal for a new install without saves.
-5. Click **Play now**. The first launch prepares files and builds the known shaders
+5. Click **Play**. The first launch prepares files and builds the known shaders
    (*Preparing shaders: N%* in the window title), so it takes a while; later starts are quick.
 
-![The setup wizard](docs/images/first-run-wizard.jpg)
+![The setup wizard](docs/images/launcher-setup.jpg)
 
 ```text
 C:\Games\Bloodborne\
@@ -114,7 +116,7 @@ the 1.09 update did not apply.
 
 **DLC.** The Game of the Year edition (CUSA03173) already includes The Old Hunters. With a
 base-game dump, dump your add-ons too: each is a folder named like `SPEXPANSIONDLC03` with only
-`sce_sys` inside. Put them in one folder and choose it as **DLC folder** on the **Game** page.
+`sce_sys` inside. Put them in one folder and choose it as **DLC folder** on the **Game & saves** page.
 
 **Achievements.** Names, descriptions and Gamerscore need the trophy key from your own PS4 in
 `user\keys.json` (shadPS4's format, `{"TrophyKeySet":{"ReleaseTrophyKey":"..."}}`). Without it,
@@ -122,7 +124,7 @@ achievements show their numbers and icons. Nothing syncs to PlayStation Network.
 
 ## Keyboard button prompts
 
-Choose **Keyboard** in the launcher (**Settings > Controls**). The key images are
+Choose **Keyboard** in the launcher (**Game & saves → Button prompts**). The key images are
 [PCBButtons](https://www.nexusmods.com/bloodborne/mods/460) by **JinkiJinn**, included with the
 port as its permissions allow; nothing needs downloading. Choosing it also sets your
 keys to the ones the images show: E interact, Left Shift dodge, R blood vial, Q item,
@@ -130,7 +132,13 @@ F transform, left / right / middle mouse for attack / firearm / lock-on, Left Ct
 for strong attack, Space for L3, G and H for gestures and personal effects. Switch back to
 PlayStation or Xbox in the launcher or the guide's **Mods** tab at any time.
 
-![Settings: Controls > Keyboard](docs/images/settings-keyboard.jpg)
+## Wine and Proton
+
+The launcher runs under Wine. On Wine/Proton the launcher selects Qt Quick's OpenGL backend
+because Wine's Direct3D 11 path does not present page changes until a resize or fullscreen
+toggle; native Windows keeps Direct3D 11. Proton 11.0 currently starts the classic Tk fallback
+because its Wine ICU lacks the unversioned ICU DLLs Qt 6.12 imports. Details and the manual
+regression procedure are in [docs/WINE_LAUNCHER_RENDERING.md](docs/WINE_LAUNCHER_RENDERING.md).
 
 ## Already have another launcher or game installation?
 
@@ -140,15 +148,24 @@ Keep your extracted game folder where it is; there is no need to extract it agai
    trophies, `keys.json`), its `bbport.ini` and its `mods` folder.
 2. Extract this package to a **new** folder and run its `Bloodborne.exe`. Do not copy only
    `Bloodborne.exe` into an older port.
-3. On **Game**, set **Game folder** to your existing folder with `eboot.bin`, and **Saves folder**
+3. On **Game & saves**, set **Game folder** to your existing folder with `eboot.bin`, and **Saves folder**
    to your existing `user` folder (or copy your saves into the new one while everything is
    closed). Keep the backup until your character loads.
-4. Copy over the mods you still want and enable them under **Mods**.
+4. Copy over the mods you still want and enable them under **Mods & patches**.
+
+## Launcher diagnostics
+
+Open **Diagnostics** in the launcher for the current process state, last exit code, runtime
+GPU/upscaler/presentation report, and the live session log. **Copy log**, **Save log…** and
+**Clear log** are available together with the port/log/config folders. The log viewer colours
+lines containing errors or warnings and can follow new output. For deeper launcher
+diagnostics, start with `BB_LAUNCHER_DEBUG=1`; this writes page, window, frame and Qt/QML
+messages to `%APPDATA%\bbport-launcher\launcher-debug.log` and is off by default.
 
 ## Settings for advanced users
 
 Game settings are stored in `bbport.ini` and launcher settings in
-`%APPDATA%\bbport-launcher\settings.json`. Environment overrides on the launcher's **Advanced**
+`%APPDATA%\bbport-launcher\settings.json`. Environment overrides on the launcher's **System**
 page take precedence:
 
 | Setting | `bbport.ini` | Override |
@@ -181,8 +198,8 @@ page take precedence:
 - Areas and effects beyond the shader catalog (so far, after the Blood-starved Beast) still
   stutter briefly the first time while their shaders compile; later releases extend the catalog.
   On AMD and Intel GPUs most fragment shaders still compile in play. On a black screen, try
-  **Advanced → Clear shader cache**.
-- Occasional "exploded" character faces: set **GPU readbacks** to **Precise** (Settings > System > Engine);
+  **System → Maintenance → Clear shader cache**.
+- Occasional "exploded" character faces: set **GPU readbacks** to **Precise** (System → Engine);
   it costs some speed.
 
 ## Requirements
@@ -199,7 +216,11 @@ page take precedence:
 
 - What is planned next: [docs/ROADMAP.md](docs/ROADMAP.md).
 - Problems: open an [issue](https://github.com/Jgamrot/bloodborne_pc/issues) with your graphics
-  card, what happened, and `user\last_run.log` from the `bbport-windows` folder.
+  card, what happened, `user\last_run.log`, and the launcher session log saved from
+  **Diagnostics → Save log…** (or `%APPDATA%\bbport-launcher\launcher-debug.log` when started with
+  `BB_LAUNCHER_DEBUG=1`).
+- Launcher UI, build and Wine verification: [docs/WINDOWS_LAUNCHER.md](docs/WINDOWS_LAUNCHER.md).
+- Wine page-transition fix: [docs/WINE_LAUNCHER_RENDERING.md](docs/WINE_LAUNCHER_RENDERING.md).
 - Building: [packaging/windows/README.md](packaging/windows/README.md).
 
 ## Credits

@@ -194,8 +194,7 @@ void Dlss::Initialize(vk::Instance instance, vk::PhysicalDevice physical, vk::De
     if (impl->api->abi >= 2) {
         impl->frame_gen_max = std::max(0, impl->api->FrameGenMaxCount());
     } else {
-        std::printf("DLSS: bbport_dlss.dll predates Frame Generation (rebuild it with "
-                    "packaging/windows/build_dlss.sh)\n");
+        std::printf("DLSS: bbport_dlss library predates Frame Generation\n");
     }
     std::printf("DLSS: ready\n");
 }

@@ -193,7 +193,97 @@ SETTINGS_SECTIONS = {
         ('Logs', []),
     ],
 }
+def launcher_page_sections(page):
+    """The settings groups of a top-level launcher page (pure helper for tests and QML)."""
+    return [{'category': category, 'section': section, 'title': section,
+             'hint': SECTION_HINTS.get((category, section), '')}
+            for category, section in LAUNCHER_PAGES.get(page, [])]
+
+
+def launcher_page_for(category, section):
+    """The top-level page that owns a legacy category/section pair (search navigation)."""
+    if (category, section) == ('System', 'Logs'):
+        return 'Logs'
+    for page, groups in LAUNCHER_PAGES.items():
+        if (category, section) in groups:
+            return page
+    for page, groups in LAUNCHER_PAGES.items():
+        if any(item[0] == category for item in groups):
+            return page
+    return 'System'
+
+
 SETTING_FIELDS = {field['key']: field for fields in FIELDS.values() for field in fields}
+
+# The launcher's top-level pages. Each shows one or more existing settings sections; keeping
+# the legacy category/section names preserves every action and setting key.
+LAUNCHER_PAGES = {
+    'Graphics': [
+        ('Visuals', 'Upscaling'),
+        ('Visuals', 'Frame generation'),
+        ('Visuals', 'Image effects'),
+        ('Visuals', 'Video memory'),
+        ('Visuals', 'Overlay'),
+    ],
+    'Display': [('Visuals', 'Display & frame rate')],
+    'Game': [
+        ('Game & Saves', 'Game files'),
+        ('Game & Saves', 'Your data'),
+        ('Game & Saves', 'In-game preferences'),
+        ('Controls', 'Button prompts'),
+        ('Controls', 'Mouse'),
+        ('Controls', 'Keyboard'),
+    ],
+    'Mods': [
+        ('Mods & Patches', 'Installed mods'),
+        ('Mods & Patches', 'Built-in enhancements'),
+        ('Mods & Patches', "Hunter's Atlas (map)"),
+        ('Mods & Patches', 'External patches'),
+        ('Mods & Patches', 'Gameplay patches'),
+    ],
+    'Online': [
+        ('Online', "The Hunter's Dream"),
+        ('Co-op', 'Seamless co-op'),
+        ('Co-op', 'Host a session'),
+        ('Co-op', 'Join a host'),
+    ],
+    'System': [
+        ('System', 'Launch'),
+        ('System', 'Updates'),
+        ('System', 'Engine'),
+        ('System', 'Developer'),
+        ('System', 'Maintenance'),
+    ],
+}
+
+SECTION_HINTS = {
+    ('Visuals', 'Upscaling'): 'Render scale, provider and sharpening. Changes apply at the next start unless live resolution is on.',
+    ('Visuals', 'Frame generation'): "Frames generated between the game's own. The display must be able to show them.",
+    ('Visuals', 'Image effects'): 'Game patches for version 1.09; each applies at the next start.',
+    ('Visuals', 'Video memory'): 'When old textures are cleared. This is not a hard VRAM cap.',
+    ('Visuals', 'Overlay'): 'Overlays drawn by the port.',
+    ('Visuals', 'Display & frame rate'): 'Output size, window mode, presentation and frame pacing.',
+    ('Game & Saves', 'Game files'): 'Your own 1.09 dump. The installer never replaces an existing folder.',
+    ('Game & Saves', 'Your data'): 'Saves, trophy keys and the writable data folder.',
+    ('Game & Saves', 'In-game preferences'): 'Language and hunter name written into the game session.',
+    ('Controls', 'Button prompts'): 'Which prompt images the game shows, from the next start.',
+    ('Controls', 'Mouse'): 'Mouse camera and menu pointer.',
+    ('Controls', 'Keyboard'): 'Keyboard movement feel.',
+    ('Mods & Patches', 'Installed mods'): 'Loose-file mods layered over the game; the game files are never changed.',
+    ('Mods & Patches', 'Built-in enhancements'): 'Files made from your game at launch. Restart to apply.',
+    ('Mods & Patches', "Hunter's Atlas (map)"): 'A full-screen map generated from your own game files.',
+    ('Mods & Patches', 'External patches'): 'XML patches from the patches folder.',
+    ('Mods & Patches', 'Gameplay patches'): 'Cheats and tweaks for version 1.09; off by default.',
+    ('Online', "The Hunter's Dream"): 'The public Bloodborne server and its Discord sign-in.',
+    ('Co-op', 'Seamless co-op'): 'BBSC: one session through deaths, lamps and bosses.',
+    ('Co-op', 'Host a session'): 'Run the co-op servers on this PC.',
+    ('Co-op', 'Join a host'): 'Enter the invite code from your host.',
+    ('System', 'Launch'): 'Startup behavior and launcher language.',
+    ('System', 'Updates'): 'Release checks and installation.',
+    ('System', 'Engine'): 'Render pipeline, readbacks and extra environment variables.',
+    ('System', 'Developer'): 'Debug views and validation. Leave off for normal play.',
+    ('System', 'Maintenance'): 'Open the port folders or clear the shader cache.',
+}
 SEARCH_TERMS = {
     'output_res': 'screen resolution display', 'fps_mode': 'fps frame rate',
     'frame_cap': 'fps limit unlocked', 'upscaler': 'dlss fsr taa',
@@ -222,6 +312,7 @@ LAUNCHER_ROUTE = {'mode': 'launcher', 'page': 'Home', 'step': 0, 'problem': ''}
 class LauncherBackend(QObject):
     changed = Signal()
     logChanged = Signal()
+    runtimeChanged = Signal()
     noticeChanged = Signal()
     runningChanged = Signal()
     closeRequested = Signal()
@@ -245,7 +336,7 @@ class LauncherBackend(QObject):
 
     def __init__(self, route=None):
         super().__init__()
-        self.app = {**core.APP_DEFAULTS, **core.load_json(core.CONFIG_FILE, {})}
+        self.app = core.load_app_settings()
         for signal in (self.changed, self.coopChanged, self.thdChanged):
             signal.connect(self.playModeChanged)
         self._route = dict(route or LAUNCHER_ROUTE)
@@ -257,6 +348,12 @@ class LauncherBackend(QObject):
         self.process = None
         self.job = None
         self._log = ''
+        self._log_lines = []
+        self._last_exit = None
+        self._stopping = False
+        self._log_stats = {'lines': 0, 'errors': 0, 'warnings': 0}
+        self._runtime = {'gpu': '', 'upscaler': '', 'objectMotion': '', 'presentMode': '',
+                         'output': '', 'error': ''}
         self._notice = 'Ready to hunt.'
         self._mods = []
         self._patches = []
@@ -312,9 +409,49 @@ class LauncherBackend(QObject):
     def log(self):
         return self._log
 
+    @Property('QVariantList', notify=logChanged)
+    def logLines(self):
+        return list(self._log_lines)
+
     @Property(bool, notify=runningChanged)
     def running(self):
         return self.process is not None
+
+    @Property(str, notify=changed)
+    def launchState(self):
+        """ready | starting | running | preparing | failed. Process state, not page state."""
+        if self._setup_running:
+            return 'preparing'
+        if self.process is not None:
+            return 'running' if self._game_started else 'starting'
+        if self._last_exit not in (None, 0):
+            return 'failed'
+        return 'ready'
+
+    @Property(int, notify=changed)
+    def lastExitCode(self):
+        return -1 if self._last_exit is None else self._last_exit
+
+    @Property('QVariantMap', notify=runtimeChanged)
+    def runtimeInfo(self):
+        return dict(self._runtime)
+
+    @Property('QVariantMap', notify=logChanged)
+    def logStats(self):
+        return dict(self._log_stats)
+
+    @Property('QVariantMap', notify=changed)
+    def paths(self):
+        user_dir = self.app.get('user_dir')
+        user = Path(core.expanded_path(user_dir)) if user_dir else core.DATA_DIR / 'user'
+        return {
+            'port': str(core.PORT_DIR),
+            'data': str(core.DATA_DIR),
+            'config': str(core.CONFIG_FILE),
+            'ini': str(core.ini_path()),
+            'saves': str(user),
+            'log': str(user / 'last_run.log'),
+        }
 
     @Property(bool, notify=setupRunningChanged)
     def setupRunning(self):
@@ -499,6 +636,10 @@ class LauncherBackend(QObject):
                                     timeout=30, env=env, creationflags=core.NO_WINDOW)
             names = [line[5:].split(':')[0] for line in result.stderr.splitlines() if line.startswith('GPU: ')]
             self.gpuDetected.emit(names[0] if names else 'Vulkan graphics card not detected')
+            probe = subprocess.run([str(exe), '--fsr4'], capture_output=True, text=True,
+                                   timeout=30, env=env, creationflags=core.NO_WINDOW)
+            lines = [line.strip() for line in probe.stdout.splitlines() if line.strip()]
+            self._fsr4_gpu = lines[-1] == '1' if lines and lines[-1] in ('0', '1') else None
         except (OSError, subprocess.TimeoutExpired):
             self.gpuDetected.emit('Graphics card check unavailable')
 
@@ -529,8 +670,20 @@ class LauncherBackend(QObject):
 
     @Property(str, notify=changed)
     def fsrStatus(self):
+        if self.ini.get('upscaler') == 'fsr411':
+            directory = core.PORT_DIR / 'fsr4_411' if (core.PORT_DIR / 'fsr4_411').is_dir() \
+                else core.DATA_DIR / 'fsr4_411'
+            if not directory.is_dir():
+                return 'FSR 4.1.1 assets are not installed; FSR 3.1 will be used.'
+            problem = core.fsr411_problem(directory, self.ini.get('output_res', '1920x1080'),
+                                          self.ini.get('preset', '0'))
+            return f'FSR 4.1.1 asset missing or damaged: {problem}' if problem else 'FSR 4.1.1 assets ready'
         missing = core.fsr4_missing()
-        return 'FSR 4 assets ready' if not missing else f'{len(missing)} FSR 4 assets missing'
+        if missing:
+            return f'{len(missing)} FSR 4 assets missing'
+        if getattr(self, '_fsr4_gpu', None) is False and self.ini.get('upscaler') == 'fsr4':
+            return 'FSR 4 assets ready; this GPU does not support the FSR 4 shaders (FSR 3.1 is used)'
+        return 'FSR 4 assets ready'
 
     def scene_size_text(self):
         """The size the game renders at before upscaling (patches.py scaled_sizes), so a soft
@@ -551,8 +704,17 @@ class LauncherBackend(QObject):
         return f'Now: the game renders at {rw} × {rh} and upscales it to {w} × {h}.'
 
     def live_field(self, field):
+        field = dict(field)
+        if field.get('kind') == 'choice':
+            current = str(self.value(field['key']))
+            options = list(field.get('options') or [])
+            if current and all(option.get('value') != current for option in options):
+                # A value written by the in-game menu or a newer version stays visible and
+                # selected; the list must not silently show the first option instead.
+                options.append({'value': current, 'text': current})
+                field['options'] = options
         if field['key'] == 'preset':
-            return {**field, 'hint': f"{field['hint']} {self.scene_size_text()}".strip()}
+            field['hint'] = f"{field['hint']} {self.scene_size_text()}".strip()
         return field
 
     @Slot(str, result='QVariantList')
@@ -572,6 +734,14 @@ class LauncherBackend(QObject):
                 return [{**self.live_field(SETTING_FIELDS[key]), 'revision': self._settings_revision}
                         for key in keys]
         return []
+
+    @Slot(str, result='QVariantList')
+    def pageSections(self, page):
+        return launcher_page_sections(page)
+
+    @Slot(str, str, result=str)
+    def pageFor(self, category, section):
+        return launcher_page_for(category, section)
 
     @Slot(str, result='QVariantList')
     def searchSettings(self, query):
@@ -607,11 +777,15 @@ class LauncherBackend(QObject):
         return self.ini.get(key, '') if key in core.INI_DEFAULTS else self.app.get(key, '')
 
     def _write(self):
-        core.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        core.CONFIG_FILE.write_text(json.dumps(self.app, indent=2, ensure_ascii=False), encoding='utf-8')
-        core.save_ini({k: self.ini[k] for k in core.INI_DEFAULTS}, self.ini_lines)
+        try:
+            core.atomic_write_text(core.CONFIG_FILE, json.dumps(self.app, indent=2, ensure_ascii=False))
+            core.save_ini({k: self.ini[k] for k in core.INI_DEFAULTS}, self.ini_lines)
+        except OSError as error:
+            self._set_notice(f'Settings could not be saved: {error}')
+            return False
         self.ini, self.ini_lines = core.load_ini()
         self.changed.emit()
+        return True
 
     @Slot()
     def installFromArchive(self):
@@ -683,7 +857,7 @@ class LauncherBackend(QObject):
                 value = '1' if value in (True, 1, '1', 'true') else '0'
             elif key == 'sharpness':
                 try:
-                    value = f'{max(0.0, min(1.0, float(value))):.2f}'
+                    value = f'{max(0.0, min(2.0, float(value))):.2f}'
                 except (ValueError, TypeError):
                     value = self.ini.get(key, '0.50')
             self.ini[key] = str(value)
@@ -717,7 +891,7 @@ class LauncherBackend(QObject):
                                 f'This is not a valid trophy keys.json: {error}')
             return
 
-        user_dir = Path(self.app.get('user_dir') or core.DATA_DIR / 'user')
+        user_dir = Path(core.expanded_path(self.app.get('user_dir') or core.DATA_DIR / 'user'))
         destination = user_dir / 'keys.json'
 
         if destination.exists():
@@ -775,18 +949,71 @@ class LauncherBackend(QObject):
         path = self.value(key) if key else core.PORT_DIR
         if not path:
             path = core.DATA_DIR / {'user_dir': 'user', 'mods_dir': 'mods', 'patches_dir': 'patches'}.get(key, '')
-        path = Path(path)
+        path = Path(core.expanded_path(path)) if path else core.PORT_DIR
         if not path.exists():
             path.mkdir(parents=True, exist_ok=True)
         os.startfile(str(path))
 
+    @Slot(str)
+    def debugPage(self, message):
+        """BB_LAUNCHER_DEBUG=1: QML page/window state, written with the launcher diagnostics."""
+        core.debug_log(f'QML {message} start={self.startPage!r} running={self.running} '
+                       f'setupRunning={self.setupRunning} notice={self.notice!r}')
+
+    @Slot(str)
     def _set_notice(self, message):
         self._notice = message
         self.noticeChanged.emit()
 
     def _append_log(self, value):
+        if not value:
+            return
         self._log = (self._log + value)[-350000:]
+        self._log_lines.extend(value.splitlines())
+        if len(self._log_lines) > 4000:
+            del self._log_lines[:-4000]
+        self._log_stats['lines'] += max(1, value.count('\n'))
+        lower = value.lower()
+        if 'error' in lower or 'failed' in lower or 'traceback' in lower:
+            self._log_stats['errors'] += 1
+        elif 'warn' in lower:
+            self._log_stats['warnings'] += 1
+        self._scan_runtime(value)
         self.logChanged.emit()
+
+    def _scan_runtime(self, value):
+        """Keep the last runtime capability lines, for the Graphics and Diagnostics pages."""
+        text = value.strip()
+        if not text:
+            return
+        changed = False
+
+        def remember(key, message):
+            nonlocal changed
+            if self._runtime.get(key) != message:
+                self._runtime[key] = message
+                changed = True
+
+        if text.startswith('GPU:') and ('Vulkan' in text or 'VRAM' in text or 'Radeon' in text
+                                        or 'GeForce' in text or 'Arc' in text):
+            remember('gpu', text)
+        elif text.startswith('Upscaler:'):
+            remember('upscaler', text)
+            if 'fallback' in text.lower() or 'unavailable' in text.lower():
+                remember('error', text)
+        elif text.startswith('Object motion:'):
+            remember('objectMotion', text)
+        elif 'present mode' in text.lower():
+            remember('presentMode', text)
+        elif text.startswith('Output ') and ':' in text:
+            remember('output', text)
+        if changed:
+            self.runtimeChanged.emit()
+
+    def _reset_runtime(self):
+        self._runtime = {'gpu': '', 'upscaler': '', 'objectMotion': '', 'presentMode': '',
+                         'output': '', 'error': ''}
+        self.runtimeChanged.emit()
 
     @Slot()
     def play(self, env=None):
@@ -808,8 +1035,14 @@ class LauncherBackend(QObject):
                 and not self.thdSignedIn):
             self._set_notice("The Hunter's Dream: sign in with Discord on the Online page first.")
             return
-        self._write()
+        if not self._write():
+            return
+        self._last_exit = None
+        self._stopping = False
         self._log = ''
+        self._log_lines = []
+        self._log_stats = {'lines': 0, 'errors': 0, 'warnings': 0}
+        self._reset_runtime()
         self.logChanged.emit()
         self._game_started = False
         try:
@@ -820,9 +1053,12 @@ class LauncherBackend(QObject):
         except OSError as error:
             self._set_notice(f'Could not start: {error}')
             self.process = None
+            self._last_exit = -1
+            self.changed.emit()
             return
         self.job = core.GameJob(self.process)
         self.runningChanged.emit()
+        self.changed.emit()
         self._set_notice('Preparing the game…')
         threading.Thread(target=self._read_output, args=(self.process,), daemon=True).start()
         if self.app.get('close_on_play'):
@@ -830,15 +1066,36 @@ class LauncherBackend(QObject):
             QTimer.singleShot(5000, self.closeRequested.emit)
 
     def _read_output(self, process):
-        with core.open_run_log(self.app.get('user_dir') or core.DATA_DIR / 'user') as log:
+        log = None
+        try:
+            user_dir = self.app.get('user_dir')
+            log = core.open_run_log(core.expanded_path(user_dir) if user_dir else core.DATA_DIR / 'user')
+        except OSError:
+            pass
+        try:
             for raw in iter(process.stdout.readline, b''):
                 line = raw.decode('utf-8', errors='replace')
-                log.write(line)
+                if log:
+                    try:
+                        log.write(line)
+                    except (OSError, ValueError):
+                        # A full disk must not stop the reader: the exit status still has to arrive.
+                        try:
+                            log.close()
+                        except OSError:
+                            pass
+                        log = None
                 self._outputLine.emit(line)
-        self._gameExited.emit(process.wait())
+        finally:
+            if log:
+                try:
+                    log.close()
+                except OSError:
+                    pass
+            self._gameExited.emit(process.wait(), process)
 
     _outputLine = Signal(str)
-    _gameExited = Signal(int)
+    _gameExited = Signal(int, object)
 
     @Slot(str)
     def _receive_line(self, line):
@@ -846,20 +1103,27 @@ class LauncherBackend(QObject):
         if 'Entering original x86-64 code' in line:
             if not self._game_started:
                 self._game_started = True
+                self.changed.emit()
                 self.gameStarted.emit()
             self._set_notice('The game is running.')
         elif 'restarting through run.py' in line:
             self._set_notice('Restarting with the new settings…')
 
-    @Slot(int)
-    def _receive_exit(self, code):
+    @Slot(int, object)
+    def _receive_exit(self, code, process):
+        # A late exit from an earlier launch must not clear a newer process.
+        if self.process is not process:
+            return
         self._append_log(f'\n— The game exited (code {code}) —\n')
         self.process = None
+        self._last_exit = 0 if self._stopping else code
+        self._stopping = False
         if self.job:
             self.job.close()
             self.job = None
         self.runningChanged.emit()
-        if self._game_started or code == 0:
+        self.changed.emit()
+        if self._last_exit == 0:
             self._set_notice('Ready to hunt.')
         else:
             self._set_notice(f'The game could not start (exit code {code}). See the log for details.')
@@ -872,6 +1136,9 @@ class LauncherBackend(QObject):
     @Slot()
     def stop(self):
         if self.job:
+            self._stopping = True
+            self._set_notice('Stopping the game…')
+            self.changed.emit()
             self.job.terminate()
 
     @Slot()
@@ -896,6 +1163,14 @@ class LauncherBackend(QObject):
                          for name, _path, meta in found]
         self.changed.emit()
 
+    def _save_profile(self, path, profile):
+        try:
+            core.atomic_write_text(path, json.dumps(profile, indent=2))
+            return True
+        except OSError as error:
+            self._set_notice(f'The mod or patch profile could not be saved: {error}')
+            return False
+
     @Slot(str, bool)
     def setMod(self, name, enabled):
         profile_file = core.DATA_DIR / 'mods.json'
@@ -907,7 +1182,8 @@ class LauncherBackend(QObject):
         disabled = set(profile.get('disabled', []))
         (disabled.discard if enabled else disabled.add)(name)
         profile.update({'order': names, 'disabled': sorted(disabled)})
-        profile_file.write_text(json.dumps(profile, indent=2), encoding='utf-8')
+        if not self._save_profile(profile_file, profile):
+            return
         self.refresh_addons()
         self._set_notice('Mod change saved. Restart the game to apply it.')
 
@@ -925,7 +1201,8 @@ class LauncherBackend(QObject):
         profile_file.parent.mkdir(parents=True, exist_ok=True)
         profile = core.load_json(profile_file, {})
         profile['order'] = names
-        profile_file.write_text(json.dumps(profile, indent=2), encoding='utf-8')
+        if not self._save_profile(profile_file, profile):
+            return
         self.refresh_addons()
 
     @Slot(str, bool)
@@ -938,7 +1215,8 @@ class LauncherBackend(QObject):
         (enabled_names.add if enabled else enabled_names.discard)(name)
         (disabled_names.discard if enabled else disabled_names.add)(name)
         profile.update({'enabled': sorted(enabled_names), 'disabled': sorted(disabled_names)})
-        profile_file.write_text(json.dumps(profile, indent=2), encoding='utf-8')
+        if not self._save_profile(profile_file, profile):
+            return
         self.refresh_addons()
 
     def _mods_dir(self):
@@ -973,9 +1251,14 @@ class LauncherBackend(QObject):
             (disabled.discard if name in chosen else disabled.add)(name)
             (enabled.add if name in chosen else enabled.discard)(name)
         profile.update({'enabled': sorted(enabled), 'disabled': sorted(disabled)})
-        profile_file.write_text(json.dumps(profile, indent=2), encoding='utf-8')
-        if choice == 'Keyboard':  # the keys the images show
-            core.save_ini(core.KEYBOARD_PROMPT_LAYOUT, self.ini_lines)
+        try:
+            core.atomic_write_text(profile_file, json.dumps(profile, indent=2))
+            if choice == 'Keyboard':  # the keys the images show
+                core.save_ini(core.KEYBOARD_PROMPT_LAYOUT, self.ini_lines)
+        except OSError as error:
+            self._set_notice(f'The button prompt choice could not be saved: {error}')
+            return
+        if choice == 'Keyboard':
             self.ini, self.ini_lines = core.load_ini()
         self.refresh_addons()
         self._set_notice(f'{choice} button prompts selected. Restart the game to apply them.'
@@ -1030,17 +1313,27 @@ class LauncherBackend(QObject):
             self._set_notice('FSR 4 assets are already installed.')
             return
         self._set_notice(f'Downloading {len(missing)} FSR 4 files…')
+
         def work():
             try:
                 folder = core.PORT_DIR / 'fsr4_shaders'
                 folder.mkdir(parents=True, exist_ok=True)
                 for name in missing:
                     part = folder / (name + '.part')
-                    with urllib.request.urlopen(f'{core.FSR4_BASE}/{name}', timeout=60) as reply:
-                        part.write_bytes(reply.read())
-                    part.replace(folder / name)
+                    try:
+                        with urllib.request.urlopen(f'{core.FSR4_BASE}/{name}', timeout=60) as reply:
+                            part.write_bytes(reply.read())
+                        if not core.validate_fsr4_file(part):
+                            raise ValueError(f'{name} was downloaded incomplete')
+                        part.replace(folder / name)
+                    except BaseException:
+                        try:
+                            part.unlink()
+                        except OSError:
+                            pass
+                        raise
                 self.workerNotice.emit('FSR 4 assets installed.')
-            except OSError as error:
+            except (OSError, ValueError) as error:
                 self.workerNotice.emit(f'FSR 4 download failed: {error}')
             self.changed.emit()
         threading.Thread(target=work, daemon=True).start()
@@ -1551,7 +1844,21 @@ class LauncherBackend(QObject):
         elif name == 'copyLog':
             QGuiApplication.clipboard().setText(self._log)
             self._set_notice('Log copied to clipboard.')
+        elif name == 'openLogs':
+            self.openFolder('user_dir')
+        elif name == 'exportLog':
+            path, _ = QFileDialog.getSaveFileName(None, 'Save launcher log', 'launcher.log',
+                                                  'Log files (*.log *.txt)')
+            if not path:
+                return
+            try:
+                Path(path).write_text(self._log, encoding='utf-8')
+                self._set_notice(f'Log saved to {path}.')
+            except OSError as error:
+                self._set_notice(f'Could not save the log: {error}')
         elif name == 'clearLog':
             self._log = ''
+            self._log_lines = []
+            self._log_stats = {'lines': 0, 'errors': 0, 'warnings': 0}
             self.logChanged.emit()
 

@@ -229,18 +229,19 @@ TemporalUpscaler::~TemporalUpscaler() {
 
 bool TemporalUpscaler::Active() const {
     // Toggle 1 << 24 switches it off at run time (A/B); history restarts after.
+    const int upscaler = BbSettings::Get().active_upscaler.load();
     return enabled && !failed &&
-           (BbSettings::Get().upscaler == BbSettings::UpscalerFsr3 ||
-            BbSettings::IsFsr4(BbSettings::Get().upscaler) ||
-            BbSettings::Get().upscaler == BbSettings::UpscalerTaa ||
-            BbSettings::Get().upscaler == BbSettings::UpscalerDlss) &&
+           (upscaler == BbSettings::UpscalerFsr3 ||
+            BbSettings::IsFsr4(upscaler) ||
+            upscaler == BbSettings::UpscalerTaa ||
+            upscaler == BbSettings::UpscalerDlss) &&
            !BbToggle::Disabled(1u << 24);
 }
 
 bool TemporalUpscaler::ReactiveOn() const {
     // FSR 4 takes no reactive mask: the opaque snapshot and the mask pass would be wasted.
     return BbSettings::Get().reactive && !BbToggle::Disabled(1u << 27) && !UseFsr4() && !UseDlss() &&
-           BbSettings::Get().upscaler != BbSettings::UpscalerTaa;
+           BbSettings::Get().active_upscaler.load() != BbSettings::UpscalerTaa;
 }
 
 void TemporalUpscaler::OnSceneColor(VideoCore::ImageId color) {
@@ -284,7 +285,11 @@ bool TemporalUpscaler::OnFrameStart() {
                 BbSettings::Get().output_res.store(output);
             }
             if (fields == 3 && provider >= 0 && provider < BbSettings::UpscalerCount) {
+                // Same state as the in-game menu's bbgpu_setting_set: the requested and active
+                // providers change together, and an old fallback reason no longer applies.
                 BbSettings::Get().upscaler.store(provider);
+                BbSettings::Get().active_upscaler.store(provider);
+                BbSettings::Get().upscaler_fallback_reason = nullptr;
             }
             std::fclose(f);
         }
@@ -296,7 +301,9 @@ bool TemporalUpscaler::OnFrameStart() {
     if (applied_preset != preset || settings.upscaler == BbSettings::UpscalerOff) failed = false;
     const bool active = Active();
     const bool jitter_on = active && settings.jitter && !BbToggle::Disabled(1u << 25);
-    const int upscaler = settings.upscaler.load();
+    // The implementation follows the provider that passed capability checks; `upscaler` keeps
+    // the user's requested value for the menu and the fallback report.
+    const int upscaler = settings.active_upscaler.load();
     const int output = BbSettings::AspectNeedsRestart() ? settings.startup_output_res : settings.output_res.load();
     const bool output_changed = !scaled_session && applied_output != output;
     if (output_changed) {
@@ -311,10 +318,14 @@ bool TemporalUpscaler::OnFrameStart() {
     if (applied_upscaler != upscaler) {
         // A failed provider keeps a fatal flag internally; a user retry gets a fresh context.
         scheduler.Finish();
-        fsr4 = std::make_unique<Fsr4Upscaler>(instance, scheduler);
-        if (BbSettings::IsFsr4(upscaler)) BbSettings::Get().fsr4_problem = nullptr;
+        if (BbSettings::IsFsr4(upscaler)) {
+            EnsureFsr4();
+            BbSettings::Get().fsr4_problem = nullptr;
+        } else {
+            fsr4.reset();
+        }
+        fsr4_failed = false; // retry after a menu change
     }
-    if (applied_upscaler != upscaler) fsr4_failed = false; // retry after a menu change
     // Dynamic scene resolution scaling (live preset switching) works on all GPUs.
     // On GPUs without D32S8 blit support, UI depth is cleared instead of copied from scene.
     if (!scaled_session) {
@@ -384,7 +395,7 @@ void TemporalUpscaler::OnDispatch(u64 cs_hash) {
 bool TemporalUpscaler::EnsureResources(u32 w, u32 h, u32 ow, u32 oh, bool hdr) {
     // DLSS, like FSR 4, has its own context: no portable FSR 3 context is made.
     const bool use_fsr4 = UseFsr4() || UseDlss();
-    const bool use_taa = BbSettings::Get().upscaler == BbSettings::UpscalerTaa;
+    const bool use_taa = BbSettings::Get().active_upscaler.load() == BbSettings::UpscalerTaa;
     if (use_taa && (w != ow || h != oh)) {
         std::printf("TAA: remove BB_RENDER_RES to use native-resolution TAA\n");
         return false;
@@ -750,8 +761,10 @@ void TemporalUpscaler::ExtraSharpen(vk::CommandBuffer cmdbuf, vk::Image target, 
     const auto device = instance.GetDevice();
     if (extra_sharpen_width != w || extra_sharpen_height != h) {
         // Retired command buffers may still read the old copy. `cmdbuf` stays open.
-        scheduler.WaitSubmitted();
-        extra_sharpen_view.reset();
+        if (extra_sharpen_image) {
+            scheduler.DeferOperation([image = std::move(extra_sharpen_image),
+                                      view = std::move(extra_sharpen_view)] {});
+        }
         extra_sharpen_image = VideoCore::UniqueImage(device, instance.GetAllocator());
         extra_sharpen_image.Create(vk::ImageCreateInfo{
             .imageType = vk::ImageType::e2D,
@@ -1006,6 +1019,57 @@ bool TemporalUpscaler::RecordReactive(vk::ImageView color_view) {
     return true;
 }
 
+void TemporalUpscaler::LogUpscalerState(const char* context, u32 w, u32 h, u32 ow, u32 oh) {
+    const auto& settings = BbSettings::Get();
+    // The requested provider is what the menu/ini holds; the active one is what runs (they
+    // differ after a capability fallback). Never report a fallback as the active upscaler.
+    const int requested_idx = settings.upscaler.load();
+    const int upscaler_idx = settings.active_upscaler.load();
+    const int preset_idx = BbSettings::RenderPreset();
+    const bool sharpen_active = settings.sharpen.load();
+    const float raw_sharpness = settings.sharpness.load();
+    float effective_sharpness = 0.0f;
+    if (sharpen_active) {
+        if (upscaler_idx == BbSettings::UpscalerTaa) {
+            effective_sharpness = std::clamp(raw_sharpness, 0.0f, 2.0f);
+        } else {
+            effective_sharpness = std::min(raw_sharpness, 1.0f) + (raw_sharpness > 1.0f ? (raw_sharpness - 1.0f) : 0.0f);
+        }
+    }
+    static int last_logged_upscaler = -1;
+    static int last_logged_requested = -1;
+    static int last_logged_preset = -1;
+    static u32 last_logged_w = 0, last_logged_h = 0, last_logged_ow = 0, last_logged_oh = 0;
+    static int last_logged_sharpen = -1;
+    static float last_logged_sharpness = -1.0f;
+    if (last_logged_upscaler != upscaler_idx || last_logged_requested != requested_idx ||
+        last_logged_preset != preset_idx ||
+        last_logged_w != w || last_logged_h != h || last_logged_ow != ow || last_logged_oh != oh ||
+        last_logged_sharpen != int(sharpen_active) || last_logged_sharpness != raw_sharpness) {
+        last_logged_upscaler = upscaler_idx;
+        last_logged_requested = requested_idx;
+        last_logged_preset = preset_idx;
+        last_logged_w = w; last_logged_h = h;
+        last_logged_ow = ow; last_logged_oh = oh;
+        last_logged_sharpen = int(sharpen_active);
+        last_logged_sharpness = raw_sharpness;
+        char provider[96];
+        if (upscaler_idx != requested_idx) {
+            std::snprintf(provider, sizeof(provider), "%s (fallback; requested %s)",
+                          BbSettings::UpscalerName(upscaler_idx),
+                          BbSettings::UpscalerName(requested_idx));
+        } else {
+            std::snprintf(provider, sizeof(provider), "%s",
+                          BbSettings::UpscalerName(upscaler_idx));
+        }
+        std::printf("[Upscaler:%s] Active: %s, Render: %ux%u, Output: %ux%u, Preset: %s (scale: %.2f), Sharpen: %s (slider: %.2f, effective: %.2f)\n",
+                    context, provider, w, h, ow, oh,
+                    BbSettings::PresetName(preset_idx), BbSettings::PresetScale(preset_idx),
+                    sharpen_active ? "ENABLED" : "DISABLED", raw_sharpness, effective_sharpness);
+        std::fflush(stdout);
+    }
+}
+
 void TemporalUpscaler::Run() {
     if (auto* profiler = GpuProfiler::Get()) {
         const char* label = BbSettings::Get().upscaler == BbSettings::UpscalerTaa
@@ -1019,6 +1083,7 @@ void TemporalUpscaler::Run() {
     const bool reduced = ReducedScene(color) && scene_targets.EligibleScene(depth);
     const u32 w = reduced ? scene_targets.Size().width : ow;
     const u32 h = reduced ? scene_targets.Size().height : oh;
+    LogUpscalerState("Native", w, h, ow, oh);
     if (color.info.pixel_format != vk::Format::eR16G16B16A16Sfloat ||
         depth.info.size.width != ow || depth.info.size.height != oh ||
         !(color.usage_flags & vk::ImageUsageFlagBits::eStorage)) {
@@ -1035,14 +1100,15 @@ void TemporalUpscaler::Run() {
         CachedView(color, vk::Format::eR16G16B16A16Sfloat, vk::ImageAspectFlagBits::eColor);
 
     scheduler.EndRendering();
-    runtime.Transit(&depth, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
-                    vk::AccessFlagBits2::eShaderRead);
-    runtime.Transit(&color, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
-                    vk::AccessFlagBits2::eShaderRead);
-    runtime.FlushBarriers();
     vk::Image input_color = color.GetImage(), input_depth = depth.GetImage();
     vk::ImageView input_color_view = color_view, input_depth_view = depth_view;
-    if (reduced) {
+    if (!reduced) {
+        runtime.Transit(&depth, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
+                        vk::AccessFlagBits2::eShaderRead);
+        runtime.Transit(&color, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
+                        vk::AccessFlagBits2::eShaderRead);
+        runtime.FlushBarriers();
+    } else {
         VideoCore::ImageViewInfo ci;
         ci.format = color.info.pixel_format;
         const auto c = scene_targets.Read(scene_color, ci);
@@ -1071,19 +1137,20 @@ void TemporalUpscaler::Run() {
         };
         cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier});
     };
-    const auto all = vk::PipelineStageFlagBits2::eAllCommands;
-    const auto rw = vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite;
+    const auto top = vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eTopOfPipe;
     // Previous contents are not needed: the layouts start from undefined every frame.
-    own_barrier(vk::Image(motion_image), vk::ImageLayout::eUndefined, all,
+    own_barrier(vk::Image(motion_image), vk::ImageLayout::eUndefined, top,
                 vk::AccessFlagBits2::eNone, vk::ImageLayout::eGeneral,
                 vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderWrite);
-    own_barrier(vk::Image(output_image), vk::ImageLayout::eUndefined, all,
-                vk::AccessFlagBits2::eNone, vk::ImageLayout::eGeneral, all, rw);
+    own_barrier(vk::Image(output_image), vk::ImageLayout::eUndefined, top,
+                vk::AccessFlagBits2::eNone, vk::ImageLayout::eGeneral,
+                vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderWrite);
 
     camera_motion.RecordMotion(cmdbuf, input_depth_view, *motion_view, w, h);
     own_barrier(vk::Image(motion_image), vk::ImageLayout::eGeneral,
                 vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderWrite,
-                vk::ImageLayout::eGeneral, all, vk::AccessFlagBits2::eShaderRead);
+                vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
+                vk::AccessFlagBits2::eShaderRead);
 
     const bool has_reactive = mask_ready || RecordReactive(input_color_view);
 
@@ -1183,7 +1250,8 @@ void TemporalUpscaler::Run() {
             ExtraSharpen(cmdbuf, vk::Image(output_image), false, ow, oh);
         }
         // The result replaces the scene color's RGB (its alpha carries data for the post).
-        own_barrier(vk::Image(output_image), vk::ImageLayout::eGeneral, all, rw,
+        own_barrier(vk::Image(output_image), vk::ImageLayout::eGeneral,
+                    vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderWrite,
                     vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
                     vk::AccessFlagBits2::eShaderRead);
         runtime.Transit(&color, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
@@ -1713,6 +1781,7 @@ void TemporalUpscaler::RunScaled() {
     if (depth.info.size.width != iw || depth.info.size.height != ih || w > ow || h > oh) {
         return;
     }
+    LogUpscalerState("Scaled", w, h, ow, oh);
     if (!EnsureResources(w, h, ow, oh, false)) {
         failed = true;
         return;
@@ -1768,16 +1837,17 @@ void TemporalUpscaler::RunScaled() {
     const auto color_access = vk::AccessFlagBits2::eColorAttachmentRead |
                               vk::AccessFlagBits2::eColorAttachmentWrite;
     const auto rw = vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite;
+    const auto top = vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eTopOfPipe;
     // The previous frame's display pass read it: all commands before.
     barrier(vk::Image(ui_image), vk::ImageAspectFlagBits::eColor, vk::ImageLayout::eUndefined,
             all, vk::AccessFlagBits2::eNone, vk::ImageLayout::eGeneral, all, rw);
     barrier(vk::Image(motion_image), vk::ImageAspectFlagBits::eColor, vk::ImageLayout::eUndefined,
-            all, vk::AccessFlagBits2::eNone, vk::ImageLayout::eGeneral,
+            top, vk::AccessFlagBits2::eNone, vk::ImageLayout::eGeneral,
             vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderWrite);
     camera_motion.RecordMotion(cmdbuf, depth_view, *motion_view, w, h);
     barrier(vk::Image(motion_image), vk::ImageAspectFlagBits::eColor, vk::ImageLayout::eGeneral,
             vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderWrite,
-            vk::ImageLayout::eGeneral, all, vk::AccessFlagBits2::eShaderRead);
+            vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderRead);
 
     const auto now = std::chrono::steady_clock::now();
     float frame_ms = std::chrono::duration<float, std::milli>(now - last_frame).count();
@@ -1789,8 +1859,9 @@ void TemporalUpscaler::RunScaled() {
     // bbport: FSR 4 writes its HDR-format output, copied into the output-size UI image.
     if (UseFsr4() || UseDlss() || BbSettings::Get().upscaler == BbSettings::UpscalerTaa) {
         barrier(vk::Image(output_image), vk::ImageAspectFlagBits::eColor,
-                vk::ImageLayout::eUndefined, all, vk::AccessFlagBits2::eNone,
-                vk::ImageLayout::eGeneral, all, rw);
+                vk::ImageLayout::eUndefined, top, vk::AccessFlagBits2::eNone,
+                vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
+                vk::AccessFlagBits2::eShaderWrite);
         bool ok4 = true;
         if (BbSettings::Get().upscaler == BbSettings::UpscalerTaa) {
             RecordTaa(cmdbuf, color_view, depth_view);
@@ -1926,8 +1997,9 @@ void TemporalUpscaler::RunScaled() {
         dispatched_last_frame = true;
         ExtraSharpen(cmdbuf, vk::Image(ui_image), true, ow, oh);
     }
-    barrier(vk::Image(ui_image), vk::ImageAspectFlagBits::eColor, vk::ImageLayout::eGeneral, all,
-            rw, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+    barrier(vk::Image(ui_image), vk::ImageAspectFlagBits::eColor, vk::ImageLayout::eGeneral,
+            vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderWrite,
+            vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eColorAttachmentOutput,
             color_access);
 
     done_this_frame = true; // the UI is not jittered
@@ -2097,16 +2169,47 @@ bool TemporalUpscaler::DisplayOverride(VAddr address, Display& display) {
 namespace Vulkan {
 
 bool TemporalUpscaler::UseFsr4() const {
-    const int selected = BbSettings::Get().upscaler;
+    const int selected = BbSettings::Get().active_upscaler.load();
     const bool supported = selected == BbSettings::UpscalerFsr411
                                ? instance.IsFsr411Supported()
                                : instance.IsFsr4Int8Supported();
     return BbSettings::IsFsr4(selected) && supported && !fsr4_failed;
 }
 
+void TemporalUpscaler::EnsureFsr4() {
+    if (fsr4) {
+        return;
+    }
+    const int selected = BbSettings::Get().active_upscaler.load();
+    const bool supported = selected == BbSettings::UpscalerFsr411
+                               ? instance.IsFsr411Supported()
+                               : instance.IsFsr4Int8Supported();
+    if (!BbSettings::Fsr4ImplementationNeededForRecord(selected, supported, fsr4_failed,
+                                                       fsr4 != nullptr)) {
+        return; // RecordFsr4 reports the fallback instead of creating a provider that cannot run
+    }
+    fsr4 = std::make_unique<Fsr4Upscaler>(instance, scheduler);
+    fsr4_failed = false;
+    reset = true;
+}
+
 bool TemporalUpscaler::RecordFsr4(vk::CommandBuffer cmdbuf, Fsr4Upscaler::Image color,
                                   Fsr4Upscaler::Image depth, u32 w, u32 h, u32 ow, u32 oh,
                                   float frame_ms) {
+    // The menu updates the active provider immediately, but OnFrameStart (which releases the
+    // implementation for a non-FSR4 provider) may not have run since. Never record through a
+    // null implementation: create it here, then fall back coherently if it still is not usable.
+    EnsureFsr4();
+    if (!fsr4) {
+        static constexpr char reason[] =
+            "FSR 4 implementation unavailable; using FSR 3.1 fallback";
+        BbSettings::Get().fsr4_problem = reason;
+        BbSettings::Get().active_upscaler = BbSettings::UpscalerFsr3;
+        BbSettings::Get().upscaler_fallback_reason = reason;
+        fsr4_failed = true;
+        reset = true;
+        return false;
+    }
     const auto& settings = BbSettings::Get();
     // Same jitter convention as FSR 3; the menu (or toggle 1 << 26) flips it for tests.
     const float sign =
@@ -2144,8 +2247,9 @@ bool TemporalUpscaler::RecordFsr4(vk::CommandBuffer cmdbuf, Fsr4Upscaler::Image 
         next = (next + 1) % kept.size();
     }
     if (!ok && fsr4->Fatal()) {
-        std::printf("Upscaler: falling back to FSR 3.1\n");
-        BbSettings::Get().upscaler = BbSettings::UpscalerFsr3;
+        std::printf("Upscaler: FSR 4 failed; falling back to FSR 3.1\n");
+        BbSettings::Get().active_upscaler = BbSettings::UpscalerFsr3;
+        BbSettings::Get().upscaler_fallback_reason = "FSR 4 runtime initialization failed; using FSR 3.1 fallback";
         fsr4_failed = true; // EnsureResources creates the FSR 3 context next frame
         reset = true;
     }
@@ -2154,7 +2258,7 @@ bool TemporalUpscaler::RecordFsr4(vk::CommandBuffer cmdbuf, Fsr4Upscaler::Image 
 
 bool TemporalUpscaler::UseDlss() const {
     const Dlss* dlss = Dlss::Get();
-    return BbSettings::Get().upscaler == BbSettings::UpscalerDlss && dlss && dlss->Available() &&
+    return BbSettings::Get().active_upscaler.load() == BbSettings::UpscalerDlss && dlss && dlss->Available() &&
            !dlss_failed;
 }
 
@@ -2191,7 +2295,8 @@ bool TemporalUpscaler::RecordDlss(vk::CommandBuffer cmdbuf, const Dlss::Resource
     }
     if (!ok) {
         std::printf("Upscaler: DLSS failed; falling back to FSR 3.1\n");
-        BbSettings::Get().upscaler = BbSettings::UpscalerFsr3;
+        BbSettings::Get().active_upscaler = BbSettings::UpscalerFsr3;
+        BbSettings::Get().upscaler_fallback_reason = "DLSS evaluation failed; using FSR 3.1 fallback";
         dlss_failed = true; // EnsureResources creates the FSR 3 context next frame
         reset = true;
     }

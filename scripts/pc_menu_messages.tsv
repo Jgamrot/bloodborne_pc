@@ -55,12 +55,12 @@
 117113	Performance
 117114	Ultra Performance
 120020	PC Effects
-120000	Chromatic Aberration	Colour fringes at the screen edges.
-120001	Depth of Field	Blur on distant or near objects.
-120002	Motion Blur	Blur when the camera turns. Costs GPU time.
-120003	Ambient Occlusion	Contact shadows in corners (SSAO).
-120004	Game Anti-aliasing	The game's own edge smoothing.
-120005	Dynamic Shadows	Shadows from moving lights. Costs GPU time.
+120000	Chromatic Aberration	Colour fringes at edges. Restart to apply.
+120001	Depth of Field	Blur on distant or near objects. Restart to apply.
+120002	Motion Blur	Blur when the camera turns. Restart to apply.
+120003	Ambient Occlusion	Contact shadows in corners. Restart to apply.
+120004	Game Anti-aliasing	The game's edge smoothing. Restart to apply.
+120005	Dynamic Shadows	Shadows from moving lights. Restart to apply.
 125020	PC Display
 125004	Fullscreen	Fullscreen or a window. Applies straight away.
 125000	FPS Counter	Frames per second, in the corner of the screen.

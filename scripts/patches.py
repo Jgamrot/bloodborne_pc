@@ -138,23 +138,34 @@ UI_HEIGHT=0x0235855D-EBOOT_BASE
 def read_settings(path):
     path = Path(path)
     # Path.read_text() defaults to the process locale; bbport.ini may contain
-    # UTF-8 outside that encoding. Match the Windows launcher (encoding='utf-8').
+    # UTF-8 outside that encoding. Invalid bytes are replaced, as in the launcher.
     settings={}
     if path.exists():
-        for line in path.read_text(encoding='utf-8').splitlines():
+        for line in path.read_text(encoding='utf-8', errors='replace').splitlines():
             key,sep,value=line.partition('=')
             if sep and not line.startswith('#'): settings[key.strip()]=value.strip()
     return settings
 
 
+def preset_index(settings):
+    """The upscaling preset as an index into PRESET_SCALES; 0 for a malformed value."""
+    try:
+        value=int(str(settings.get('preset','0') or 0).strip())
+    except (TypeError,ValueError):
+        value=0
+    return max(0,min(value,len(PRESET_SCALES)-1))
+
+
 def render_size(settings,override=''):
     """Render resolution for the upscaler preset, or None for native."""
     if override:
-        w,h=(int(v) for v in override.lower().split('x'))
-        return (w,h)
+        try:
+            w,h=(int(v) for v in override.lower().split('x'))
+            if w>0 and h>0: return (w,h)
+        except (AttributeError,ValueError):
+            pass
     if settings.get('upscaler','fsr3')=='off': return None
-    preset=int(settings.get('preset','0') or 0)
-    scale=PRESET_SCALES[max(0,min(preset,len(PRESET_SCALES)-1))]
+    scale=PRESET_SCALES[preset_index(settings)]
     if scale==1.0: return None
     # Even sizes (the game has half-resolution buffers).
     return tuple(max(2,round(v/scale/2)*2) for v in OUTPUT_SIZE)
@@ -178,8 +189,7 @@ def scaled_sizes(settings):
     if out==OUTPUT_SIZE or (settings.get('upscaler')=='taa' and out[0]*9==out[1]*16): return None
     scale=1.0
     if settings.get('upscaler','fsr3') not in ('off','taa'):
-        preset=int(settings.get('preset','0') or 0)
-        scale=PRESET_SCALES[max(0,min(preset,len(PRESET_SCALES)-1))]
+        scale=PRESET_SCALES[preset_index(settings)]
     render=tuple(max(2,round(v/scale/2)*2) for v in out)
     # A scene of exactly the UI coordinate space's size (1920x1080 at 4K Performance, the
     # ultrawide HUD canvas at 2560x1080 or 3840x1080 native) is indistinguishable from it: the
@@ -444,7 +454,15 @@ def external_selection(found, config):
     each file's isEnabled."""
     settings={}
     if config and Path(config).is_file():
-        settings=json.loads(Path(config).read_text(encoding='utf-8'))
+        try:
+            settings=json.loads(Path(config).read_text(encoding='utf-8'))
+        except (OSError,ValueError) as error:
+            # A corrupt profile falls back to each patch file's own isEnabled.
+            print(f'Patches: ignoring {config}: {error}',file=sys.stderr)
+            settings={}
+        if not isinstance(settings,dict):
+            print(f'Patches: ignoring {config}: the profile is not an object',file=sys.stderr)
+            settings={}
     enabled,disabled=set(settings.get('enabled',[])),set(settings.get('disabled',[]))
     return [(key,path,meta) for key,path,meta in found
             if key in enabled or (key not in disabled and meta.get('isEnabled','false').lower()=='true')]

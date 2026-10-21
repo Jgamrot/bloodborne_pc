@@ -575,10 +575,11 @@ void SettingsTab() {
     auto& s = BbSettings::Get();
     PageTitle("Visual settings");
     Section("Temporal upscaling");
-    static const char* upscalers[] = {"Off", "FSR 3.1", "FSR 4 (INT8)", "FSR 4.1.1 (INT8)",
-                                     "TAA (native anti-aliasing)", "DLSS (NVIDIA RTX)"};
+    static const char* upscalers[] = {"Off", "FSR 3.1 (Recommended)", "FSR 4 (INT8) [Experimental ⚠️]", "FSR 4.1.1 (INT8) [Experimental ⚠️]",
+                                      "TAA (native anti-aliasing)", "DLSS (NVIDIA RTX)"};
     static const char* later[] = {"XeSS"};
     int upscaler = s.upscaler;
+    const int active_upscaler = s.active_upscaler.load();
     if (ComboRow("Upscaler", upscalers[upscaler])) {
         for (int i = 0; i < BbSettings::UpscalerCount; ++i) {
             const bool supported = i == BbSettings::UpscalerFsr4 ? s.fsr4_supported.load()
@@ -587,6 +588,8 @@ void SettingsTab() {
             ImGui::BeginDisabled(!supported);
             if (ImGui::Selectable(upscalers[i], i == upscaler)) {
                 Store(s.upscaler, i, true);
+                s.active_upscaler = i;
+                s.upscaler_fallback_reason = nullptr;
             }
             ImGui::EndDisabled();
             if (!supported) {
@@ -603,6 +606,12 @@ void SettingsTab() {
         }
         ImGui::EndCombo();
     }
+    if (active_upscaler != upscaler) {
+        const char* reason = s.upscaler_fallback_reason.load();
+        NoteF(Ink::Warn, "Active upscaler: %s (Requested: %s). %s",
+              BbSettings::UpscalerName(active_upscaler), BbSettings::UpscalerName(upscaler),
+              reason ? reason : "Using fallback.");
+    }
     if (const char* problem = s.dlss_problem.load(); problem && upscaler == BbSettings::UpscalerDlss) {
         NoteF(Ink::Warn, "DLSS: %s", problem);
     }
@@ -612,14 +621,18 @@ void SettingsTab() {
             Note("The selected mode is active. You can select FSR 4 again.");
     }
     if (BbSettings::IsFsr4(s.upscaler)) {
+        Note("Experimental on this GPU. AMD Radeon RX 6600M is RDNA 2. FSR 4 may run significantly slower or less reliably than FSR 3.1. Performance is not guaranteed. If you experience frame drops, stuttering, or instability, switch to FSR 3.1.", Ink::Warn);
+        Hint("FSR 3.1 is the recommended stable baseline for this GPU. FSR 4 uses INT8 shader dot products without hardware tensor acceleration.");
         if (s.upscaler == BbSettings::UpscalerFsr411) {
-            Hint("FSR 4.1.1 INT8: AMD 4.1.1 DLL model reproduced in Vulkan. One model covers Native through Performance, with another for Ultra Performance. Assets: tools/fsr4cap/build_assets.sh (requires the DLL and Proton).");
+            Hint("FSR 4.1.1 INT8: AMD 4.1.1 DLL model reproduced in Vulkan. Assets: tools/fsr4cap/build_assets.sh.");
         } else {
-            Hint("FSR 4 INT8 uses the v07 model from the AMD FidelityFX SDK. Higher quality than FSR 3.1, with more GPU work. Changing presets rebuilds the model and may pause briefly. Assets: tools/fetch_fsr4_assets.sh.");
+            Hint("FSR 4 INT8 uses the v07 model from AMD FidelityFX SDK. Assets: tools/fetch_fsr4_assets.sh.");
         }
-        Checkbox("FSR 4: auto exposure", s.fsr4_auto_exposure);
-        Checkbox("FSR 4: invert jitter", s.fsr4_invert_jitter);
+        Checkbox("FSR 4: auto exposure [Immediate]", s.fsr4_auto_exposure);
+        Checkbox("FSR 4: invert jitter [Immediate]", s.fsr4_invert_jitter);
         Hint("Ghosting diagnostics: FSR 4 uses exposure to normalize color and decide when to discard history. These options apply immediately.");
+    } else {
+        Hint("Reconstructs the output image from lower scene resolution. Performance and quality depend on algorithm, input resolution, and GPU hardware. FSR 3.1 is the recommended baseline.");
     }
     const bool upscaler_on = s.upscaler != BbSettings::UpscalerOff;
     const bool taa = s.upscaler == BbSettings::UpscalerTaa;
@@ -663,18 +676,18 @@ void SettingsTab() {
     } else {
         Hint("Native AA uses the upscaler for anti-aliasing. Other presets reduce scene resolution relative to the output. The HUD is drawn at output resolution. Preset changes apply on the next frame in a live session.");
     }
-    Checkbox("Sharpening (RCAS)", s.sharpen);
+    Checkbox("Sharpening (RCAS) [Immediate]", s.sharpen);
     ImGui::BeginDisabled(!s.sharpen);
     Slider("Sharpness", s.sharpness, 0.0f, 2.0f);
-    Hint("Up to 1 uses the upscaler sharpening pass (RCAS). Values above 1 add another RCAS pass. Ctrl+click the slider to enter an exact value.");
+    Hint("RCAS enhances perceived edge clarity. Moderate values (0.3-0.8) improve contrast; excessive sharpening introduces halos and ringing. Applies immediately.");
     ImGui::EndDisabled();
     Checkbox("Subpixel jitter", s.jitter);
-    Hint("The camera shifts by a fraction of a pixel each frame so the upscaler can recover detail across multiple frames. Without jitter, it only smooths using frame history.");
+    Hint("Shifts the camera by subpixel offsets each frame so the temporal reconstructor recovers high-frequency detail. Without jitter, upscalers only smooth based on history.");
 
     Section("Reactive mask");
     ImGui::BeginDisabled(taa);
-    Checkbox("Enable mask", s.reactive);
-    Hint("Marks transparent effects such as particles and fog so the upscaler relies less on history. Reduces trails, but can increase shimmer behind those effects.");
+    Checkbox("Enable mask [Immediate]", s.reactive);
+    Hint("Marks transparent effects (particles, fog, blood) to minimize temporal ghosting trails behind effects. Applies immediately.");
     ImGui::BeginDisabled(!s.reactive);
     Slider("Scale", s.reactive_scale, 0.0f, 4.0f);
     Slider("Threshold", s.reactive_threshold, 0.0f, 1.0f);
@@ -685,13 +698,19 @@ void SettingsTab() {
     }
     ImGui::EndDisabled();
     ImGui::EndDisabled();
-    Checkbox("Object motion vectors", s.object_motion);
-    Hint("Accurate vectors for animated objects reduce breakup on clothing and weapons during movement. Static geometry receives no extra pass. Changes require a restart.");
+    if (s.object_motion_supported) {
+        Checkbox("Object motion vectors [Requires restart]", s.object_motion);
+        Hint("Generates velocity vectors for animated characters and weapons to eliminate motion ghosting. Costs ~10% FPS. Requires restart.");
+    } else {
+        const char* problem = s.object_motion_problem.load();
+        RowLabel("Object motion vectors (disabled on AMD RDNA 2)", Px(24.0f));
+        Hint(problem ? problem : "Disabled by default on AMD RX 6000-series due to driver device-loss crashes. Requires BB_OBJECT_MOTION=1 diagnostic override.");
+    }
     bool show_motion = s.debug_view == BbSettings::DebugMotion;
     if (Toggle("Show motion vectors (debug)", &show_motion)) {
         s.debug_view = show_motion ? BbSettings::DebugMotion : BbSettings::DebugNone;
     }
-    Hint("Red/green: horizontal/vertical motion (8 pixels = full brightness). Blue: the pixel has accurate object motion, beyond camera motion. A moving object with no blue or red/green is treated as stationary and may leave trails.");
+    Hint("Red/green: horizontal/vertical motion (8 pixels = full brightness). Blue: accurate object motion beyond camera motion.");
     ImGui::EndDisabled(); // upscaler off
 
     Section("Frame generation");
