@@ -2,6 +2,19 @@
 set -euo pipefail
 cd -- "$(dirname -- "$0")"
 mkdir -p out
+# out/gpu records absolute source paths in its CMake cache. Moving or renaming the
+# checkout makes CMake reject the cache, so discard the tree and configure again.
+configure_gpu() {
+    local log=out/gpu-configure.log
+    cmake "$@" >/dev/null 2>"$log" && { rm -f "$log"; return 0; }
+    if grep -Eq 'is different than the directory|does not match the source' "$log"; then
+        echo 'out/gpu belongs to a different checkout; configuring it from scratch.'
+        rm -rf out/gpu
+        cmake "$@" >/dev/null 2>"$log" && { rm -f "$log"; return 0; }
+    fi
+    cat "$log" >&2
+    return 1
+}
 # Windows: MSYS2 CLANG64. The GPU library is static
 # there and CMake links bb-probe.exe as well; no PGO (GCC-only flags), LTO off by default.
 case $(uname -s) in
@@ -20,8 +33,8 @@ MINGW*|MSYS*)
             git -C gpu/third_party/fsr-vulkan apply "$PWD/$patch"
         fi
     done
-    cmake -S gpu -B out/gpu -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBB_PGO=off \
-        -DBB_LTO="${BB_LTO:-OFF}" -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ >/dev/null
+    configure_gpu -S gpu -B out/gpu -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBB_PGO=off \
+        -DBB_LTO="${BB_LTO:-OFF}" -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
     echo "GPU library and loader: LTO ${BB_LTO:-OFF}"
     if ! ninja -C out/gpu bb-probe bb-gpu-capabilities bb-play > out/gpu-build.log 2>&1; then
         grep -v '^\[' out/gpu-build.log | tail -40 >&2
@@ -69,8 +82,8 @@ for patch in gpu/patches/fsr-vulkan/*.patch; do
         git -C gpu/third_party/fsr-vulkan apply "$PWD/$patch"
     fi
 done
-cmake -S gpu -B out/gpu -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBB_PGO="$pgo" \
-    -DBB_LTO="${BB_LTO:-ON}" -DBB_PGO_DIR="$PWD/pgo" >/dev/null
+configure_gpu -S gpu -B out/gpu -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBB_PGO="$pgo" \
+    -DBB_LTO="${BB_LTO:-ON}" -DBB_PGO_DIR="$PWD/pgo"
 echo "GPU library: PGO $pgo, LTO ${BB_LTO:-ON}"
 # A failed GPU build must stop here: an older libbbgpu.so would otherwise be used silently.
 if ! ninja -C out/gpu bbgpu > out/gpu-build.log 2>&1; then
