@@ -121,6 +121,18 @@ if [[ -d fsr4_shaders ]]; then cp -r fsr4_shaders "$dest/"; fi
 if [[ -d shader_catalog ]]; then cp -r shader_catalog "$dest/"; fi
 # DLSS (NVIDIA RTX): the MSVC-built bridge and NVIDIA's runtime, next to bb-probe.exe
 # (packaging/windows/build_dlss.sh). Without them the DLSS option stays unavailable.
+# A bridge older than its source, or without nvngx_dlssg.dll (Frame Generation), is rebuilt
+# when DLSS_SDK_ROOT is set; otherwise packaging stops rather than ship it.
+if [[ -f out/bbport_dlss.dll ]] &&
+   [[ ! -f out/nvngx_dlssg.dll || -n $(find gpu/dlss_bridge -type f -newer out/bbport_dlss.dll) ]]; then
+    if [[ -z ${DLSS_SDK_ROOT:-} ]]; then
+        echo 'out/bbport_dlss.dll is older than gpu/dlss_bridge, or out/nvngx_dlssg.dll is missing:' >&2
+        echo 'set DLSS_SDK_ROOT to a checkout of github.com/NVIDIA/DLSS and run again' >&2
+        echo '(or delete out/bbport_dlss.dll to package without DLSS)' >&2
+        exit 1
+    fi
+    bash packaging/windows/build_dlss.sh
+fi
 if [[ -f out/bbport_dlss.dll && -f out/nvngx_dlss.dll ]]; then
     cp out/bbport_dlss.dll out/nvngx_dlss.dll "$dest/bin/"
     if [[ -f out/nvngx_dlssg.dll ]]; then cp out/nvngx_dlssg.dll "$dest/bin/"; fi
