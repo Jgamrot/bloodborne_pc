@@ -6,6 +6,8 @@ bbport.ini
 fsr4_shaders/
 pgo/
 *.png
+# Hunter's Atlas art ships with the port (tools/atlas/README.md).
+!tools/atlas/art/*.png
 last_run.log
 dist/
 packaging/runtime-paths.nix
