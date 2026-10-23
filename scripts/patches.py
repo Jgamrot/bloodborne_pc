@@ -623,6 +623,13 @@ HASH_GUARDS={
 # over both of the patch's writes).
 HEAP_PATCH='Increased Graphics Heap Sizes'
 HEAP_GUARD=(0x04b36dda-EBOOT_BASE,10,'2655d1cb82ac9da1')
+# The game's GX range allocator (CPU-written GPU buffers), 160 MiB; Ebrietas' trail effect fills it
+# before her device losses (Awakenchan 0.9.37 beta 8). BB_GX_REGION_MB: 160-416, default 288.
+GX_REGION_SITE=0x1d9933d
+GX_REGION_CODE=bytes.fromhex('c78388000000')+struct.pack('<I',0x8000000)
+GX_REGION_GAME,GX_REGION_DEFAULT,GX_REGION_MAX=160,288,416
+GX_HEAP_SITE=0x4736dd8  # GFX_GraphicsPrivate's size, which the region is carved from
+GX_HEAP_PS4=0x8ef00000
 
 
 def pc_heaps_enabled(settings):
@@ -632,6 +639,27 @@ def pc_heaps_enabled(settings):
 def site_matches(elf,guard):
     offset,length,check=guard
     return hashlib.sha256(eboot_bytes(elf,offset,offset+length)).hexdigest()[:16]==check
+
+
+def gx_region_writes(elf,heaps_written,env=os.environ):
+    """The writes that enlarge the GX range allocator, and GFX_GraphicsPrivate by as much when
+    the graphics heaps are still at the PS4 size."""
+    value=env.get('BB_GX_REGION_MB','').strip()
+    mib=int(value) if value.isdigit() else GX_REGION_DEFAULT
+    if mib<=GX_REGION_GAME:
+        print(f"Patches: the GX range allocator at the game's {GX_REGION_GAME} MiB (BB_GX_REGION_MB)")
+        return []
+    mib=min(mib,GX_REGION_MAX)
+    if eboot_bytes(elf,GX_REGION_SITE,GX_REGION_SITE+len(GX_REGION_CODE))!=GX_REGION_CODE or \
+       (not heaps_written and eboot_bytes(elf,GX_HEAP_SITE,GX_HEAP_SITE+8)!=struct.pack('<Q',GX_HEAP_PS4)):
+        print("Patches: the GX range allocator left at the game's size: this eboot.bin differs there")
+        return []
+    out=[(GX_REGION_SITE+6,struct.pack('<I',(mib-GX_REGION_GAME+128)<<20))]
+    if not heaps_written:
+        out.append((GX_HEAP_SITE,struct.pack('<Q',GX_HEAP_PS4+((mib-GX_REGION_GAME)<<20))))
+    print(f"Patches: the GX range allocator {mib} MiB (the game's {GX_REGION_GAME})"+
+          ('' if heaps_written else f', the graphics heap {(GX_HEAP_PS4>>20)+mib-GX_REGION_GAME} MiB'))
+    return out
 
 
 def guarded_patches(names,elf):
@@ -864,6 +892,8 @@ def main():
         if replaced:
             print(f'Patches: external {replaced} replaces the built-in {", ".join(preset)}')
             names=[n for n in names if n not in preset]
+    writes+=gx_region_writes(elf,any(offset<GX_HEAP_SITE+16 and offset+len(data)>GX_HEAP_SITE
+                                     for offset,data in writes))
     # BBPATCH2: the patch base, so the loader can rebase pointers the patches write into
     # relocated slots (60/90 FPS++ replace function pointers).
     blob=struct.pack('<8sQQ',b'BBPATCH2',EBOOT_BASE,len(writes))
