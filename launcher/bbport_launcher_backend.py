@@ -31,6 +31,10 @@ def choice_rows(options):
     return [{'value': str(value), 'text': label[0]} for value, label in options]
 
 
+# scripts/patches.py ONLINE_BLOCKED and gpu/shim/bbport_settings.cpp OnlineBlocked.
+OFF_ONLINE = "Off when playing online (The Hunter's Dream or co-op)."
+
+
 def row(key, label, kind='text', options=None, hint=''):
     return {'key': key, 'label': label, 'kind': kind, 'options': choice_rows(options or []), 'hint': hint}
 
@@ -107,11 +111,11 @@ FIELDS = {
         row('mouse_hide_cursor', 'Hide the mouse cursor in the game (for mouse-to-controller tools)', 'toggle'),
         row('move_smoothing', 'Keyboard movement smoothing (WASD direction changes)', 'choice',
             core.MOVE_SMOOTHING),
-        row('debug_camera', 'Free camera', 'toggle'),
-        row('debug_menu', 'Debug menu', 'toggle'),
+        row('debug_camera', 'Free camera', 'toggle', hint=OFF_ONLINE),
+        row('debug_menu', 'Debug menu', 'toggle', hint=OFF_ONLINE),
     ],
     'Cheats': [
-        *[row(key, title[0], 'toggle') for key, title, _ in core.CHEATS],
+        *[row(key, title[0], 'toggle', hint=OFF_ONLINE) for key, title, _ in core.CHEATS],
         *[row(key, title[0], 'toggle') for key, title, _ in core.TWEAKS],
     ],
     'Online': [
