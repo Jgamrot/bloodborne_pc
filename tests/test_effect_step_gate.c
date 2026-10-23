@@ -754,6 +754,20 @@ static void check_emission(void) {
     }
 }
 
+/* The image as the loader leaves it: each TCB load a gs: load with a displacement (probe.c
+ * patch_tcb_loads). */
+static void tcb_as_loaded(void) {
+    static const unsigned char fs[] = {0x64, 0x48, 0x8b, 0x04, 0x25, 0, 0, 0, 0};
+    size_t loads = 0;
+    for (size_t i = 0; i + sizeof(fs) <= IMAGE; ++i)
+        if (g_image[i] == 0x64 && !memcmp(g_image + i, fs, sizeof(fs))) {
+            g_image[i] = 0x65;
+            g_image[i + 6] = 0x14;
+            ++loads;
+        }
+    assert(loads);
+}
+
 static void check_game(void) {
     /* The effects stepping 1/30 s a frame: nothing hooked. */
     build_fixture(1.0f / 30);
@@ -779,6 +793,11 @@ static void check_game(void) {
     build_fixture(1.0f / 60);
     g_image[BB_BN(0x2e8ec00) + 0x10] ^= 1;
     assert(bb_effect_step_gate_install() == 12);
+
+    /* The loader's TCB loads inside checked functions (the wind warm-up has six). */
+    build_fixture(1.0f / 60);
+    tcb_as_loaded();
+    assert(bb_effect_step_gate_install() == 16);
 
     /* A 60 FPS list's step: every site hooked. */
     build_fixture(1.0f / 60);
