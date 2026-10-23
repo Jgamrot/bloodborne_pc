@@ -2,6 +2,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import unittest
@@ -113,6 +114,169 @@ class CoopTests(unittest.TestCase):
             archive.writestr('../outside.txt', 'x')
         with zipfile.ZipFile(data) as archive, self.assertRaises(coop.CoopError):
             coop._safe_extract(archive, Path(self.folder.name) / 'unpack')
+
+    def test_release_selection_pairs_assets_and_allows_prereleases_and_unusual_tags(self):
+        release = {'tag_name': 'release_candidate-2', 'prerelease': True,
+                   'body': 'This release supports BBport players.', 'assets': [
+            {'name': 'BBSC-0.0.2-BBport.zip', 'digest': 'sha256:' + 'a' * 64, 'browser_download_url': 'client'},
+            {'name': 'BBSC-0.0.2-Server.zip', 'digest': 'sha256:' + 'b' * 64, 'browser_download_url': 'server'},
+            {'name': 'BBSC-9.0.0-Server-Linux.zip', 'digest': 'sha256:' + 'c' * 64},
+        ]}
+        with mock.patch.object(coop.json, 'load', return_value=[release]), \
+                mock.patch.object(coop.urllib.request, 'urlopen'):
+            selected, assets = coop.discover_release()
+        self.assertEqual(selected['tag_name'], 'release_candidate-2')
+        self.assertEqual(assets['client']['version'], '0.0.2')
+        self.assertEqual(assets['server']['url'], 'server')
+
+    def test_release_with_missing_or_mismatched_server_is_rejected(self):
+        release = {'tag_name': 'v0.0.3', 'body': 'BBport compatible.', 'assets': [
+            {'name': 'BBSC-0.0.3-BBport.zip', 'digest': 'sha256:' + 'a' * 64,
+             'browser_download_url': 'client'},
+            {'name': 'BBSC-0.0.2-Server.zip', 'digest': 'sha256:' + 'b' * 64,
+             'browser_download_url': 'server'},
+        ]}
+        with mock.patch.object(coop.json, 'load', return_value=[release]), \
+                mock.patch.object(coop.urllib.request, 'urlopen'), \
+                self.assertRaises(coop.CoopError):
+            coop.discover_release()
+
+    def test_release_without_explicit_bbport_compatibility_is_not_selected(self):
+        release = {'tag_name': 'v0.0.3', 'body': 'General release', 'assets': [
+            {'name': 'BBSC-0.0.3-BBport.zip', 'digest': 'sha256:' + 'a' * 64,
+             'browser_download_url': 'client'},
+            {'name': 'BBSC-0.0.3-Server.zip', 'digest': 'sha256:' + 'b' * 64,
+             'browser_download_url': 'server'},
+        ]}
+        with mock.patch.object(coop.json, 'load', return_value=[release]), \
+                mock.patch.object(coop.urllib.request, 'urlopen'), \
+                self.assertRaisesRegex(coop.CoopError, 'No compatible release'):
+            coop.discover_release()
+
+    def test_offline_fallback_requires_a_consistent_verified_pair(self):
+        for kind in ('client', 'server'):
+            root = coop.package_dir(kind)
+            if kind == 'client':
+                files = ('bbsc/bbsc-launch.exe', 'bbsc/bbsc.dll', 'account/shadnet-sample.exe')
+            else:
+                files = ('server/shadnet.exe', 'server/BBSC-GameServer.exe', 'server/shadnet.cfg')
+            for relative in files:
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b'installed')
+            (root / '.bbsc-release.json').write_text(json.dumps({'tag': 'v0.0.2'}), encoding='utf-8')
+        marker = coop.coop_dir() / 'installed-release.json'
+        marker.write_text(json.dumps({'tag': 'v0.0.2'}), encoding='utf-8')
+        with mock.patch.object(coop, 'discover_release', side_effect=coop.CoopError('offline')):
+            coop.ensure_packages()  # a complete verified pair remains usable
+            (coop.package_dir('server') / '.bbsc-release.json').write_text(
+                json.dumps({'tag': 'v0.0.1'}), encoding='utf-8')
+            with self.assertRaisesRegex(coop.CoopError, 'offline'):
+                coop.ensure_packages()  # mixed/incomplete pair must not launch offline
+
+    def _package_asset(self, kind, root, version='0.0.2'):
+        name = f'BBSC-{version}-{"BBport" if kind == "client" else "Server"}.zip'
+        asset = {'name': name, 'url': name, 'digest': 'unused', 'version': version, 'tag': 'v0.0.2'}
+        folder = Path(root) / Path(name).stem
+        if kind == 'client':
+            files = ('bbsc/bbsc-launch.exe', 'bbsc/bbsc.dll', 'account/shadnet-sample.exe')
+        else:
+            files = ('server/shadnet.exe', 'server/BBSC-GameServer.exe', 'server/shadnet.cfg')
+        for name_part in files:
+            path = folder / name_part
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b'new')
+        archive_path = Path(root) / name
+        with zipfile.ZipFile(archive_path, 'w') as archive:
+            for path in folder.rglob('*'):
+                if path.is_file():
+                    archive.write(path, path.relative_to(root))
+        return asset, archive_path
+
+    def test_upgrade_migrates_configuration_database_accounts_and_settings(self):
+        old = coop.coop_dir() / 'BBSC-0.0.1-Server' / 'server'
+        for relative, content in (('shadnet.cfg', b'RegistrationSecretKey=key'),
+                                  ('db/accounts.db', b'accounts'), ('accounts/players.json', b'players'),
+                                  ('settings/custom.json', b'settings')):
+            path = old / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        self.assertTrue(coop._legacy_package_dir('server'))
+        unpacked = Path(self.folder.name) / 'release'
+        unpacked.mkdir()
+        assets, archives = {}, {}
+        for kind in ('client', 'server'):
+            assets[kind], archives[kind] = self._package_asset(kind, unpacked)
+        release = {'tag_name': 'v0.0.2'}
+        with mock.patch.object(coop, 'discover_release', return_value=(release, assets)), \
+                mock.patch.object(coop, '_download_asset', side_effect=lambda asset, destination, progress=None:
+                                  archives['client' if asset is assets['client'] else 'server']):
+            coop.install_release()
+        new = coop.package_dir('server') / 'server'
+        self.assertTrue(coop.installed('client'))
+        self.assertTrue(coop.installed('server'))
+        for relative, content in (('shadnet.cfg', b'RegistrationSecretKey=key'),
+                                  ('db/accounts.db', b'accounts'), ('accounts/players.json', b'players'),
+                                  ('settings/custom.json', b'settings')):
+            self.assertEqual((new / relative).read_bytes(), content)
+
+    def test_corrupted_archive_fails_without_touching_installed_packages(self):
+        for kind in ('client', 'server'):
+            target = coop.package_dir(kind)
+            target.mkdir(parents=True)
+            (target / 'sentinel').write_bytes(b'old')
+        release = {'tag_name': 'v0.0.2'}
+        assets = {kind: {'name': f'BBSC-0.0.2-{suffix}.zip', 'url': 'x', 'digest': 'unused',
+                         'version': '0.0.2'} for kind, suffix in (('client', 'BBport'), ('server', 'Server'))}
+        corrupt = Path(self.folder.name) / 'corrupt.zip'
+        corrupt.write_bytes(b'not a zip archive')
+        with mock.patch.object(coop, 'discover_release', return_value=(release, assets)), \
+                mock.patch.object(coop, '_download_asset', return_value=corrupt), \
+                self.assertRaisesRegex(coop.CoopError, 'not a valid package'):
+            coop.install_release()
+        for kind in ('client', 'server'):
+            self.assertEqual((coop.package_dir(kind) / 'sentinel').read_bytes(), b'old')
+
+    def test_failed_download_is_reported_without_installing(self):
+        with mock.patch.object(coop.urllib.request, 'urlopen', side_effect=OSError('offline')):
+            with self.assertRaisesRegex(coop.CoopError, 'Could not download'):
+                coop._download_asset({'name': 'client.zip', 'url': 'https://example.invalid',
+                                      'digest': '0' * 64}, Path(self.folder.name))
+
+    def test_second_swap_failure_rolls_back_first_package(self):
+        for kind in ('client', 'server'):
+            target = coop.package_dir(kind)
+            target.mkdir(parents=True)
+            (target / 'sentinel').write_bytes(b'old-' + kind.encode())
+        release = {'tag_name': 'v0.0.2'}
+        assets = {}
+        archives = {}
+        unpacked = Path(self.folder.name) / 'unpacked'
+        unpacked.mkdir()
+        for kind in ('client', 'server'):
+            assets[kind], archives[kind] = self._package_asset(kind, unpacked)
+        def extract(zip_path, asset, staging):
+            folder = staging / Path(asset['name']).stem
+            folder.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(unpacked / folder.name, folder)
+            return folder
+        real_replace = coop.os.replace
+        calls = 0
+        def replace(src, dst):
+            nonlocal calls
+            calls += 1
+            if calls == 4:
+                raise OSError('simulated install failure')
+            return real_replace(src, dst)
+        with mock.patch.object(coop, 'discover_release', return_value=(release, assets)), \
+                mock.patch.object(coop, '_download_asset', side_effect=lambda a, d, p=None: archives[
+                    'client' if a is assets['client'] else 'server']), \
+                mock.patch.object(coop, '_extract_package', side_effect=extract), \
+                mock.patch.object(coop.os, 'replace', side_effect=replace), \
+                self.assertRaisesRegex(coop.CoopError, 'previous packages were restored'):
+            coop.install_release()
+        for kind in ('client', 'server'):
+            self.assertEqual((coop.package_dir(kind) / 'sentinel').read_bytes(), b'old-' + kind.encode())
 
     def test_firewall_rules_stay_on_tailscale_and_the_home_network(self):
         script = coop._firewall_script(r'C:\Games\bbport\bin\bb-probe.exe')

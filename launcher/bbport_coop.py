@@ -16,6 +16,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import shutil
@@ -30,12 +31,10 @@ import zipfile
 REPO = 'Classmg22/BBSC'
 RELEASES = f'https://github.com/{REPO}/releases'
 DISCORD = 'https://discord.gg/Df7BCmfWdt'
-# (release tag, asset, folder inside the zip): the BBport package of the newest release and the
-# server package (only published with 0.0.1).
-PACKAGES = {
-    'client': ('0.0.1_hotfix', 'BBSC-0.0.1-BBport.zip', 'BBSC-0.0.1-BBport'),
-    'server': ('v0.0.1', 'BBSC-0.0.1-Server.zip', 'BBSC-0.0.1-Server'),
-}
+# Release assets are paired by their package version and release metadata. Never combine assets
+# from separate tags: BBSC requires every player and its host to run the same version.
+PACKAGE_VERSION = re.compile(r'^BBSC-(?P<version>[0-9]+(?:\.[0-9]+)+)-(?P<kind>BBport|Server)\.zip$', re.I)
+RELEASE_API = f'https://api.github.com/repos/{REPO}/releases?per_page=100'
 SHADNET_PORT, MATCHING_PORT, WEBAPI_PORT, GAME_PORT, RELAY_PORT = 31313, 31314, 31315, 20443, 20444
 INVITE_PREFIX = 'BBCOOP-'
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
@@ -59,7 +58,12 @@ def coop_dir():
 
 
 def package_dir(kind):
-    return coop_dir() / PACKAGES[kind][2]
+    return coop_dir() / ('client' if kind == 'client' else 'server-package')
+
+
+def _legacy_package_dir(kind):
+    candidates = (('BBSC-0.0.1-BBport',) if kind == 'client' else ('BBSC-0.0.1-Server',))
+    return next((coop_dir() / name for name in candidates if (coop_dir() / name).is_dir()), None)
 
 
 def installed(kind):
@@ -71,21 +75,58 @@ def installed(kind):
                                                             'shadnet.cfg'))
 
 
+def _installed_for_tag(kind, tag):
+    try:
+        installed_tag = json.loads((package_dir(kind) / '.bbsc-release.json').read_text(
+            encoding='utf-8')).get('tag')
+    except (OSError, ValueError, AttributeError):
+        return False
+    return installed_tag == tag and installed(kind)
+
+
 # --- Download -------------------------------------------------------------------------------------
 
-def _release_asset(tag, name):
-    request = urllib.request.Request(f'https://api.github.com/repos/{REPO}/releases/tags/{tag}',
-                                     headers={'User-Agent': 'bbport-launcher',
-                                              'Accept': 'application/vnd.github+json'})
-    with urllib.request.urlopen(request, timeout=30) as reply:
-        release = json.load(reply)
+def _release_asset(release, kind):
+    wanted = 'BBport' if kind == 'client' else 'Server'
     for asset in release.get('assets', []):
-        if asset.get('name') == name:
+        match = PACKAGE_VERSION.fullmatch(str(asset.get('name', '')))
+        if match and match.group('kind').lower() == wanted.lower():
             digest = str(asset.get('digest') or '')
             if not digest.startswith('sha256:'):
-                raise CoopError(f'{name}: the release publishes no SHA-256 to check it against.')
-            return asset['browser_download_url'], digest.split(':', 1)[1].lower()
-    raise CoopError(f'{name} is not in BBSC release {tag} any more ({RELEASES}).')
+                raise CoopError(f"{asset['name']}: the release publishes no SHA-256 to check it against.")
+            return {'name': asset['name'], 'url': asset.get('browser_download_url'),
+                    'digest': digest.split(':', 1)[1].lower(), 'version': match.group('version')}
+    return None
+
+
+def discover_release():
+    """Return one release with matching BBport and server assets; prereleases are supported."""
+    request = urllib.request.Request(RELEASE_API,
+                                     headers={'User-Agent': 'bbport-launcher',
+                                              'Accept': 'application/vnd.github+json'})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as reply:
+            releases = json.load(reply)
+    except Exception as error:
+        raise CoopError(f'Could not check BBSC releases: {error}') from error
+    if not isinstance(releases, list):
+        raise CoopError('GitHub returned invalid BBSC release metadata.')
+    # GitHub orders this endpoint newest-first. Keep the release tag exact for URLs and diagnostics;
+    # don't try to semver-sort unusual upstream tags.
+    for release in releases:
+        if release.get('draft'):
+            continue
+        client, server = _release_asset(release, 'client'), _release_asset(release, 'server')
+        # A BBport-named asset distinguishes this launcher target from the shadPS4 package;
+        # require the release notes to independently state BBport compatibility before auto-update.
+        description = ' '.join((str(release.get('name') or ''), str(release.get('body') or ''))).casefold()
+        if (client and server and client['version'] == server['version'] and 'bbport' in description):
+            tag = release.get('tag_name')
+            if not isinstance(tag, str) or not tag:
+                continue
+            client['tag'] = server['tag'] = tag
+            return release, {'client': client, 'server': server}
+    raise CoopError(f'No compatible release containing matching BBport and server packages was found ({RELEASES}).')
 
 
 def _safe_extract(archive, destination):
@@ -97,16 +138,14 @@ def _safe_extract(archive, destination):
     archive.extractall(destination)
 
 
-def download(kind, progress=None):
-    """Downloads and unpacks one BBSC package; the server package keeps an existing database,
-    registration key and logs."""
-    tag, name, folder = PACKAGES[kind]
-    url, expected = _release_asset(tag, name)
-    coop_dir().mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix='.bbsc-', dir=coop_dir()) as temporary:
-        zip_path = Path(temporary) / name
-        digest = hashlib.sha256()
-        request = urllib.request.Request(url, headers={'User-Agent': 'bbport-launcher'})
+def _download_asset(asset, destination, progress=None):
+    name, url, expected = asset['name'], asset['url'], asset['digest']
+    if not url:
+        raise CoopError(f'{name} has no download URL in GitHub release metadata.')
+    zip_path = destination / name
+    digest = hashlib.sha256()
+    request = urllib.request.Request(url, headers={'User-Agent': 'bbport-launcher'})
+    try:
         with urllib.request.urlopen(request, timeout=60) as reply, open(zip_path, 'wb') as out:
             total = int(reply.headers.get('Content-Length') or 0)
             done = 0
@@ -116,27 +155,137 @@ def download(kind, progress=None):
                 done += len(chunk)
                 if progress and total:
                     progress(f'Downloading {name}: {done * 100 // total}%')
-        if digest.hexdigest() != expected:
-            raise CoopError(f'{name} does not match the checksum BBSC published; not installed.')
-        staging = Path(temporary) / 'unpacked'
+    except Exception as error:
+        raise CoopError(f'Could not download {name}: {error}') from error
+    if digest.hexdigest() != expected:
+        raise CoopError(f'{name} does not match the checksum BBSC published; not installed.')
+    return zip_path
+
+
+def _extract_package(zip_path, asset, staging):
+    try:
         with zipfile.ZipFile(zip_path) as archive:
             _safe_extract(archive, staging)
-        new = staging / folder
-        old = package_dir(kind)
-        if kind == 'server' and old.is_dir():
-            # The host's own data survives an update of the programs.
-            for keep in ('server/shadnet.cfg', 'server/db', 'server/logs'):
-                if (old / keep).exists():
-                    target = new / keep
-                    if target.is_dir():
-                        shutil.rmtree(target)
-                    elif target.exists():
-                        target.unlink()
-                    shutil.move(str(old / keep), str(target))
-        if old.exists():
-            shutil.rmtree(old)
-        shutil.move(str(new), str(old))
-    return package_dir(kind)
+    except (OSError, zipfile.BadZipFile, RuntimeError) as error:
+        raise CoopError(f'{asset["name"]} is not a valid package: {error}') from error
+    folder = staging / Path(asset['name']).stem
+    if not folder.is_dir():
+        raise CoopError(f'{asset["name"]} has no expected package folder.')
+    required = (('bbsc/bbsc-launch.exe', 'bbsc/bbsc.dll', 'account/shadnet-sample.exe')
+                if asset['name'].lower().endswith('-bbport.zip') else
+                ('server/shadnet.exe', 'server/BBSC-GameServer.exe', 'server/shadnet.cfg'))
+    if not all((folder / item).is_file() for item in required):
+        raise CoopError(f'{asset["name"]} is missing required BBport/server files.')
+    return folder
+
+
+def _preserve_server_data(old, new):
+    # Only mutable state crosses package upgrades. Binaries are always from the verified archive.
+    for name in ('server/shadnet.cfg', 'server/worlds.cfg', 'server/scoreboards.cfg',
+                 'server/BBSC-GameServer.cfg', 'server/server.cfg', 'server/settings.cfg',
+                 'server/db', 'server/logs', 'server/accounts', 'server/settings',
+                 'server/registration_keys', 'server/savedata'):
+        source, target = old / name, new / name
+        if not source.exists():
+            continue
+        if target.is_dir():
+            shutil.rmtree(target)
+        elif target.exists():
+            target.unlink()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if source.is_dir():
+            shutil.copytree(source, target)
+        else:
+            shutil.copy2(source, target)
+
+
+def install_release(progress=None, discovered=None):
+    """Download, validate and atomically swap a compatible pair, restoring both on failure."""
+    release, assets = discovered or discover_release()
+    coop_dir().mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='.bbsc-', dir=coop_dir()) as temporary:
+        staging = Path(temporary) / 'unpacked'
+        new = {}
+        for kind in ('client', 'server'):
+            zip_path = _download_asset(assets[kind], Path(temporary), progress)
+            new[kind] = _extract_package(zip_path, assets[kind], staging)
+            (new[kind] / '.bbsc-release.json').write_text(json.dumps({
+                'tag': assets[kind]['tag'], 'version': assets[kind]['version'],
+                'asset': assets[kind]['name'],
+            }), encoding='utf-8')
+        old_server = package_dir('server')
+        if not old_server.is_dir():
+            old_server = _legacy_package_dir('server') or old_server
+        if old_server.is_dir():
+            _preserve_server_data(old_server, new['server'])
+        targets = {kind: package_dir(kind) for kind in ('client', 'server')}
+        backups = {}
+        installed_now = []
+        try:
+            for kind in ('client', 'server'):
+                target = targets[kind]
+                if target.exists():
+                    backup = coop_dir() / f'.bbsc-backup-{kind}-{time.time_ns()}'
+                    os.replace(target, backup)
+                    backups[kind] = backup
+                os.replace(new[kind], target)
+                installed_now.append(kind)
+            (coop_dir() / 'installed-release.json').write_text(json.dumps({
+                'tag': release.get('tag_name'), 'version': assets['client']['version']
+            }), encoding='utf-8')
+            for backup in backups.values():
+                shutil.rmtree(backup, ignore_errors=True)
+        except Exception as error:
+            for kind in reversed(installed_now):
+                shutil.rmtree(targets[kind], ignore_errors=True)
+            rollback_errors = []
+            for kind, backup in backups.items():
+                if backup.exists():
+                    try:
+                        os.replace(backup, targets[kind])
+                    except OSError as rollback_error:
+                        rollback_errors.append(f'{backup}: {rollback_error}')
+            if rollback_errors:
+                detail = ' Previous package backup retained at ' + '; '.join(rollback_errors)
+            else:
+                detail = ' The previous packages were restored.'
+                for backup in backups.values():
+                    shutil.rmtree(backup, ignore_errors=True)
+            raise CoopError(f'BBSC installation failed: {error}.{detail}') from error
+    return {kind: package_dir(kind) for kind in ('client', 'server')}
+
+
+def download(kind=None, progress=None):
+    """Compatibility wrapper: every install operation installs a matched client/server pair."""
+    return install_release(progress)
+
+
+def ensure_packages(progress=None):
+    """Check upstream metadata before use; reinstall only when the compatible pair changed."""
+    try:
+        discovered = discover_release()
+    except CoopError:
+        # A previously installed, verified pair remains usable offline. A new installation still
+        # requires live metadata so it cannot guess compatibility.
+        marker = coop_dir() / 'installed-release.json'
+        try:
+            known_pair = json.loads(marker.read_text(encoding='utf-8')).get('tag')
+        except (OSError, ValueError, AttributeError):
+            known_pair = None
+        if (isinstance(known_pair, str) and known_pair
+                and all(_installed_for_tag(kind, known_pair) for kind in ('client', 'server'))):
+            return
+        raise
+    release, assets = discovered
+    marker = coop_dir() / 'installed-release.json'
+    try:
+        installed_tag = json.loads(marker.read_text(encoding='utf-8')).get('tag')
+    except (OSError, ValueError, AttributeError):
+        installed_tag = None
+    if (installed_tag == release.get('tag_name') and all(
+            _installed_for_tag(kind, installed_tag) for kind in ('client', 'server'))):
+        return
+    install_release(progress, discovered)
 
 
 # --- Network ---------------------------------------------------------------------------------------
