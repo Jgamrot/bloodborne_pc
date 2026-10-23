@@ -15,6 +15,7 @@
 #endif
 #ifdef _WIN32
 #include <windows.h>
+#include <pthread.h>
 #include "respawn_patch.h"
 #include "menu_heap_patch.h"
 #include "engine_hooks.h"
@@ -170,18 +171,27 @@ static void describe_address(char *out, size_t size, uintptr_t address) {
     snprintf(out,size,"%p",(void *)address);
 }
 static int fatal_reported;
+static int strict_handles;
+/* "1234 'CSChrThread0'": the guest thread's name (runtime_thread.c), when it has one. */
+static void describe_thread(char *out,size_t size) {
+    char name[16]={0};
+    pthread_getname_np(pthread_self(),name,sizeof(name));
+    if (name[0]) snprintf(out,size,"%lu '%s'",GetCurrentThreadId(),name);
+    else snprintf(out,size,"%lu",GetCurrentThreadId());
+}
 static LONG fatal_exception(EXCEPTION_POINTERS *info) {
     if (__atomic_exchange_n(&fatal_reported,1,__ATOMIC_ACQ_REL)) { Sleep(INFINITE); }
     const EXCEPTION_RECORD *record=info->ExceptionRecord;
     const CONTEXT *c=info->ContextRecord;
-    char where[MAX_PATH+64];
+    char where[MAX_PATH+64], thread[48];
     describe_address(where,sizeof(where),(uintptr_t)c->Rip);
+    describe_thread(thread,sizeof(thread));
     if (record->ExceptionCode==EXCEPTION_ACCESS_VIOLATION && record->NumberParameters>=2)
-        fprintf(stderr,"Fault: %s access to %p at %s (thread %lu)\n",
+        fprintf(stderr,"Fault: %s access to %p at %s (thread %s)\n",
                 record->ExceptionInformation[0]==1 ? "write" : record->ExceptionInformation[0]==8 ? "execute" : "read",
-                (void *)record->ExceptionInformation[1],where,GetCurrentThreadId());
+                (void *)record->ExceptionInformation[1],where,thread);
     else
-        fprintf(stderr,"Fault: exception 0x%08lx at %s (thread %lu)\n",record->ExceptionCode,where,GetCurrentThreadId());
+        fprintf(stderr,"Fault: exception 0x%08lx at %s (thread %s)\n",record->ExceptionCode,where,thread);
     fprintf(stderr,"  rax=%016llx rbx=%016llx rcx=%016llx rdx=%016llx\n  rsi=%016llx rdi=%016llx rbp=%016llx rsp=%016llx\n",
             c->Rax,c->Rbx,c->Rcx,c->Rdx,c->Rsi,c->Rdi,c->Rbp,c->Rsp);
     if (gpu_enabled) bbgpu_dump_guest_writes(info);
@@ -249,8 +259,17 @@ static LONG CALLBACK vectored_fault(EXCEPTION_POINTERS *info) {
             ours=1;
         if (ours) return fatal_exception(info);
     }
-    /* BB_STRICT_HANDLES=1: a closed or invalid handle used anywhere is reported (diagnostics). */
-    if (code==0xC0000008 /* STATUS_INVALID_HANDLE */) return fatal_exception(info);
+    if (code==0xC0000008 /* STATUS_INVALID_HANDLE */) {
+        /* BB_STRICT_HANDLES=1 stops at the first one; otherwise the code that raised it may handle it. */
+        if (strict_handles) return fatal_exception(info);
+        static int noted;
+        if (!__atomic_exchange_n(&noted,1,__ATOMIC_ACQ_REL)) {
+            char where[MAX_PATH+64], thread[48];
+            describe_address(where,sizeof(where),(uintptr_t)info->ContextRecord->Rip);
+            describe_thread(thread,sizeof(thread));
+            fprintf(stderr,"Runtime: invalid handle at %s (thread %s), left to its handler\n",where,thread);
+        }
+    }
     return EXCEPTION_CONTINUE_SEARCH;
 }
 static LONG WINAPI unhandled_fault(EXCEPTION_POINTERS *info) { return fatal_exception(info); }
@@ -524,6 +543,7 @@ int main(int argc, char **argv) {
     AddVectoredExceptionHandler(1, vectored_fault);
     SetUnhandledExceptionFilter(unhandled_fault);
     if (getenv("BB_STRICT_HANDLES")) {
+        strict_handles=1;
         PROCESS_MITIGATION_STRICT_HANDLE_CHECK_POLICY strict={0};
         strict.RaiseExceptionOnInvalidHandleReference=1;
         strict.HandleExceptionsPermanentlyEnabled=1;
