@@ -6,6 +6,7 @@
 
 #include "thd.h"
 #include "thd_internal.h"
+#include "windows_trust.h"
 #include "../../../src/code_check.h"
 
 #include <algorithm>
@@ -212,6 +213,7 @@ HttpResult Perform(const std::string& base, const std::string& path, const std::
         cli->set_follow_location(false);
 #ifdef CPPHTTPLIB_OPENSSL_SUPPORT
         cli->enable_server_certificate_verification(Cfg().verify_tls);
+        if (Cfg().verify_tls) bbnet::TrustWindowsRoots(*cli, base);
 #endif
     };
     const bool reused = cli != nullptr;
