@@ -104,6 +104,7 @@ void TextureCache::DownloadImageMemory(ImageId image_id, bool sync) {
     };
     runtime.DownloadImage(&image, download.buffer, std::span{&image_download, 1});
     if (sync) {
+        runtime.FlushBarriers();
         scheduler.Finish();
         download.Invalidate();
         Core::Memory::Instance()->TryWriteBacking(std::bit_cast<u8*>(image.info.guest_address),
