@@ -36,15 +36,16 @@ def emevd(events):
 
 class SettingsTests(unittest.TestCase):
     def test_off_unless_switched_on_and_environment_wins(self):
-        menu_off = {'pc_menu': '0'}
+        menu_off = {'pc_menu': '0', 'pc_ebrietas_effect': '0'}
         self.assertEqual(enhancements.enabled(menu_off, {}), [])
         self.assertEqual(enhancements.enabled({**menu_off, 'pc_two_invaders': '1'}, {}), ['pc_two_invaders'])
         self.assertEqual(enhancements.enabled({**menu_off, 'pc_two_invaders': '1'}, {'BB_PC_TWO_INVADERS': '0'}), [])
         self.assertEqual(enhancements.enabled(menu_off, {'BB_PC_MIRROR': '1'}), ['pc_mirror_appearance'])
 
-    def test_the_menu_is_on_unless_switched_off(self):
-        self.assertEqual(enhancements.enabled({}, {}), ['pc_menu'])
-        self.assertEqual(enhancements.enabled({}, {'BB_PC_MENU': '0'}), [])
+    def test_the_menu_and_the_ebrietas_fix_are_on_unless_switched_off(self):
+        self.assertEqual(enhancements.enabled({}, {}), ['pc_menu', 'pc_ebrietas_effect'])
+        self.assertEqual(enhancements.enabled({}, {'BB_PC_MENU': '0'}), ['pc_ebrietas_effect'])
+        self.assertEqual(enhancements.enabled({'pc_ebrietas_effect': '0'}, {}), ['pc_menu'])
 
     def test_overlay_and_launcher_offer_the_same_keys(self):
         header = (ROOT / 'gpu/shim/bbport_settings.h').read_text(encoding='utf-8')
@@ -107,6 +108,15 @@ class RealGameTests(unittest.TestCase):
         altar = archive.files[archive.index('t242307.esd')]
         self.assertEqual(hashlib.sha256(altar).hexdigest(), enhancements.REBIRTH_OUT)
 
+    def test_ebrietas_effect_matches_the_known_result(self):
+        files = enhancements.ebrietas_effect(GAME / 'dvdroot_ps4')
+        self.assertEqual(sorted(p.name for p in files), ['frpg_sfxbnd_m24_02.ffxbnd.dcx', 'frpg_sfxbnd_m29a.ffxbnd.dcx'])
+        for relative, _input, output in enhancements.EFFECT_BINDERS:
+            raw = dcx_decompress(files[relative])
+            self.assertEqual(hashlib.sha256(raw).hexdigest(), output)
+            self.assertEqual(hashlib.sha256(enhancements.binder_file(raw, enhancements.EFFECT_NAME)).hexdigest(),
+                             enhancements.EFFECT_SOURCE[2])
+
     def test_rewrites_match_bbhost_and_are_reused(self):
         with tempfile.TemporaryDirectory() as folder:
             out = Path(folder)
@@ -132,7 +142,7 @@ class RealGameTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             out = Path(folder)
             keys = enhancements.enabled({'pc_rebirth': '1', 'pc_enhanced_lamps': '1'}, {'BB_PC_REMATCHES': '1'})
-            self.assertEqual(keys[-3:], ['pc_enhanced_lamps', 'pc_boss_rematches', 'pc_menu'])
+            self.assertEqual(keys[-4:], ['pc_enhanced_lamps', 'pc_boss_rematches', 'pc_menu', 'pc_ebrietas_effect'])
             made = {m.name: m for m in enhancements.make(GAME, out, keys)}
             root = made['boss-rematches'] / 'dvdroot_ps4'
             self.assertTrue((root / 'event/m24_01_00_00.emevd.dcx').is_file())

@@ -33,6 +33,9 @@ engine/maiden_events.cpp and engine/dream_mirror_layout.cpp.
   pc_menu               (BB_PC_MENU)          the in-game PC menu's assets (menu_assets.py): its
                                               sections in the options movie and its strings in
                                               every language. On by default: it only adds rows.
+  pc_ebrietas_effect    (BB_PC_EBRIETAS_EFFECT) Ebrietas' trail effect as Nexus mod 41 ("SFX Fix")
+                                              makes it: above 30 FPS her rock emitter never stops,
+                                              the rocks pile up and the GPU is lost. On by default.
 
 Rebirth's altar entries use message ids the PC menu's files add (pc_menu_messages.tsv).
 """
@@ -58,9 +61,10 @@ FEATURES = {
     # After the lamps: its Central Yharnam talk archive adds the rematch to the lamp menu.
     'pc_boss_rematches': ('BB_PC_REMATCHES', 'boss-rematches', 'Boss rematches at their lamps (experimental)'),
     'pc_menu': ('BB_PC_MENU', 'pc-menu', 'In-game PC menu (System > PC Settings)'),
+    'pc_ebrietas_effect': ('BB_PC_EBRIETAS_EFFECT', 'ebrietas-effect', "Ebrietas' trail effect (Nexus mod 41's fix)"),
 }
-# Off unless switched on, except these: they change nothing the game does by themselves.
-DEFAULT_ON = {'pc_menu'}
+# Off unless switched on, except these: the menu only adds rows, the Ebrietas effect avoids a crash.
+DEFAULT_ON = {'pc_menu', 'pc_ebrietas_effect'}
 # Still a first test: the launcher labels its toggle experimental; none in the overlay.
 EXPERIMENTAL = {'pc_boss_rematches'}
 # Bumped when a rewrite changes, so every install makes its files again.
@@ -417,8 +421,89 @@ def pc_menu(dvdroot):
     return menu_assets.make(dvdroot, log=lambda line: print(f'Enhancements: {line}', file=sys.stderr))
 
 
+# --- Ebrietas' trail effect (Awakenchan/BloodBorneButPc 0.9.37 beta 9, after Nexus mod 41) ------
+# f001251720.fxr is replaced in her two effect binders by the Fishing Hamlet's f001454436.fxr.
+EFFECT_NAME = 'f001251720.fxr'
+EFFECT_SHA = '988c55ba0f689bc0b4f8e7a9f9b184ef8cd9bcd4601b2c925387ff5ce3fc9f0b'
+EFFECT_SOURCE = (Path('sfx') / 'frpg_sfxbnd_m36.ffxbnd.dcx', 'f001454436.fxr',
+                 '990644087f325191d34fd2f4b633a9f7c6a63ce9d71786c4289a7cae5cdfb4e0')
+# binder, sha256 of it unpacked (1.09) and of the result unpacked
+EFFECT_BINDERS = (
+    (Path('sfx') / 'frpg_sfxbnd_m24_02.ffxbnd.dcx',
+     'b0bd083145a753a667c4021a3f817879646b1f8b84201e2774daa17e1c5b0e99',
+     'fae6b9639fb02b34188a3dd262b2695f7667812749f984f1eb2fd2ab298a9e9b'),
+    (Path('sfx') / 'frpg_sfxbnd_m29a.ffxbnd.dcx',
+     '085f2d3d60d54e50fa981c7aad89ca42f47b3a733a78b40ee98f572883ce122b',
+     '8348b2b7f110feb7ca0a444e8331886b85fe24ba422b8b9909cdc5d551ffcb07'),
+)
+BND4_ENTRY = 0x24  # flags, -1, packed and unpacked size (i64), data offset (u32), id, name offset
+
+
+def binder_entries(bnd):
+    """(header offset, file name, data offset, size) of each file in an effect binder (BND4
+    format 0x74: sizes, 32-bit offsets, ids, UTF-16 names)."""
+    if bnd[:4] != b'BND4' or struct.unpack_from('<q', bnd, 0x20)[0] != BND4_ENTRY or bnd[0x30:0x32] != b'\x01\x74':
+        raise Skip('unexpected effect binder layout')
+    entries = []
+    for i in range(struct.unpack_from('<i', bnd, 0x0c)[0]):
+        at = 0x40 + i * BND4_ENTRY
+        packed, unpacked, offset, _id, name_at = struct.unpack_from('<qqIii', bnd, at + 8)
+        if packed != unpacked or offset + packed > len(bnd):
+            raise Skip('unexpected effect binder entry')
+        end = name_at
+        while bnd[end:end + 2] != b'\0\0':
+            end += 2
+        name = bnd[name_at:end].decode('utf-16-le').replace('\\', '/').rsplit('/', 1)[-1]
+        entries.append((at, name, offset, packed))
+    return entries
+
+
+def binder_file(bnd, name):
+    found = [(offset, size) for _at, entry, offset, size in binder_entries(bnd) if entry == name]
+    if len(found) != 1:
+        raise Skip(f'{name} is not in the effect binder once')
+    offset, size = found[0]
+    return bnd[offset:offset + size]
+
+
+def with_binder_file(bnd, name, data):
+    """The binder with `name` holding `data`, appended 16-byte aligned; the other entries and the
+    name table stay where they are."""
+    at = next(at for at, entry, _offset, _size in binder_entries(bnd) if entry == name)
+    offset = (len(bnd) + 15) & ~15
+    out = bytearray(bnd) + bytes(offset - len(bnd)) + data
+    struct.pack_into('<qqI', out, at + 8, len(data), len(data), offset)
+    return bytes(out)
+
+
+def ebrietas_effect(dvdroot):
+    files = {}
+    replacement = None
+    for relative, input_sha, output_sha in EFFECT_BINDERS:
+        try:
+            packed = (dvdroot / relative).read_bytes()
+            raw = dcx_decompress(packed)
+            if sha256(raw) != input_sha:
+                raise Skip('not the 1.09 file')
+            if sha256(binder_file(raw, EFFECT_NAME)) != EFFECT_SHA:
+                raise Skip(f'unexpected {EFFECT_NAME}')
+            if replacement is None:
+                source, source_name, source_sha = EFFECT_SOURCE
+                replacement = binder_file(dcx_decompress((dvdroot / source).read_bytes()), source_name)
+                if sha256(replacement) != source_sha:
+                    raise Skip(f'unexpected {source_name}')
+            result = with_binder_file(raw, EFFECT_NAME, replacement)
+            if sha256(result) != output_sha:
+                raise Skip('the rewrite is not the known result')
+            files[relative] = dcx_compress(result, template=packed)
+        except (OSError, FormatError, Skip) as error:
+            print(f"Enhancements: Ebrietas' trail effect: {relative.name} left as it is ({error})", file=sys.stderr)
+    return files
+
+
 MAKERS = {'pc_two_invaders': two_invaders, 'pc_mirror_appearance': dream_mirror, 'pc_rebirth': rebirth,
-          'pc_enhanced_lamps': enhanced_lamps, 'pc_boss_rematches': boss_rematches, 'pc_menu': pc_menu}
+          'pc_enhanced_lamps': enhanced_lamps, 'pc_boss_rematches': boss_rematches, 'pc_menu': pc_menu,
+          'pc_ebrietas_effect': ebrietas_effect}
 # Makers whose files depend on which other features are on (their stamp names those features).
 COMBINED = {'pc_enhanced_lamps': ('pc_rebirth',), 'pc_boss_rematches': ('pc_rebirth', 'pc_two_invaders')}
 
