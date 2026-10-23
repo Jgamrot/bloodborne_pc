@@ -1,6 +1,6 @@
-/* Guest-visible handles below 1 TiB (runtime_low_alloc) and the direct-memory pool fallback.
- * The game keeps lock owners in 40 bits (issue #51), so thread, TLS, mutex, cond and rwlock
- * records must stay below 1 TiB. Build (MSYS2 CLANG64 or Linux):
+/* Guest-visible handles below 1 TiB (runtime_low_alloc), the direct-memory pool fallback and the
+ * port's own direct memory past the game's pool. The game keeps lock owners in 40 bits (issue
+ * #51), so thread, TLS, mutex, cond and rwlock records must stay below 1 TiB. Build (MSYS2 CLANG64 or Linux):
  *   cc -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_low_handles.c \
  *      src/runtime_memory.c src/runtime_mutex.c -o out/low-handles-test
  *   (Windows: add src/compat_win.c -lonecore -lbcrypt -Wl,--disable-high-entropy-va, as bb-probe)
@@ -20,6 +20,7 @@ uintptr_t runtime_lookup(const RuntimeExport *table, size_t count, const char *n
     return 0;
 }
 typedef uint64_t (ABI *DirectSize)(void);
+typedef int32_t (ABI *DirectAllocate)(int64_t, int64_t, uint64_t, uint64_t, int, int64_t *);
 typedef int32_t (ABI *MutexInit)(void **, void **, const char *);
 typedef int32_t (ABI *HandleOp)(void **);
 
@@ -80,6 +81,30 @@ static void pool_fallback(void) {
     else assert(granted==UINT64_C(6144)<<20);
     printf("PASS: direct memory pool %llu MiB\n",(unsigned long long)(granted>>20));
 }
+static void port_memory(void) {
+    const uint64_t mib=UINT64_C(1)<<20;
+    assert(runtime_memory_port_reserve(64*mib)==0);
+    DirectSize size=(DirectSize)runtime_memory_resolve("pO96TwzOm5E#p#J");
+    DirectAllocate allocate=(DirectAllocate)runtime_memory_resolve("rTXw65xmLIA#p#J");
+    assert(size && allocate);
+    const uint64_t pool=size();
+    assert(pool==UINT64_C(5056)*mib);
+    assert(runtime_memory_port_reserve(128*mib)==-1); /* the pool exists */
+    /* The game can take its whole pool and nothing past it. */
+    int64_t offset=-1;
+    assert(allocate(0,INT64_MAX,pool,0,0,&offset)==0 && offset==0);
+    assert(allocate(0,INT64_MAX,16384,0,0,&offset)!=0);
+    void *block=NULL;
+    assert(runtime_memory_port_map(48*mib,64*1024,&block)==0);
+    assert(block && !((uintptr_t)block%(64*1024)) && (uintptr_t)block+48*mib<TIB);
+    assert(runtime_memory_is_mapped((uintptr_t)block,48*mib));
+    memset(block,0x5a,48*mib);
+    assert(((unsigned char *)block)[48*mib-1]==0x5a);
+    void *more=NULL;
+    assert(runtime_memory_port_map(32*mib,64*1024,&more)!=0 && !more); /* 16 MiB left */
+    assert(runtime_memory_port_map(16*mib,64*1024,&more)==0 && more);
+    puts("PASS: port direct memory past the game's pool");
+}
 static int run_self(const char *self, const char *mode, const char *env) {
     char command[1024];
     snprintf(command,sizeof(command),"%s\"%s\" %s",env,self,mode);
@@ -96,6 +121,7 @@ int main(int argc, char **argv) {
     if (argc>1 && !strcmp(argv[1],"--low")) { low_handles(); return 0; }
     if (argc>1 && !strcmp(argv[1],"--host")) { host_heap(); return 0; }
     if (argc>1 && !strcmp(argv[1],"--pool")) { pool_fallback(); return 0; }
+    if (argc>1 && !strcmp(argv[1],"--port")) { port_memory(); return 0; }
 #ifdef _WIN32
 #define ENV(a) "set " a "&& "
 #else
@@ -106,6 +132,7 @@ int main(int argc, char **argv) {
     failed|=run_self(argv[0],"--host",ENV("BB_LOW_HANDLES=0"))!=0;
     failed|=run_self(argv[0],"--pool",ENV("BB_DMEM_MB=6144"))!=0;
     failed|=run_self(argv[0],"--pool",ENV("BB_DMEM_MB=6144") ENV("BB_TEST_REFUSE_DMEM=1"))!=0;
+    failed|=run_self(argv[0],"--port","")!=0;
     if (failed) { puts("FAIL"); return 1; }
     puts("PASS: low handles and direct memory fallback");
     return 0;
