@@ -69,6 +69,8 @@ def preset_writes(xml,preset,fps,app_version,segments,elf=None,settings=None):
     if fps in SCALED_FPS:
         writes=rate_scaled(writes,SCALED_FPS[fps])
         print(f'Patches: {fps} FPS: {SCALED_BASE} with its frame-rate values for {fps}')
+    else:
+        writes+=cloth_writes(xml,app_version,segments,elf,PRESET_RATES.get(fps),settings or {})
     writes=rate_corrections(writes,PRESET_RATES.get(fps),elf,settings or {})
     return frame_steps(writes,PRESET_RATES.get(fps),elf,settings or {})
 
@@ -93,6 +95,10 @@ EFFECT_RATE_SITES=(0x26FB39F,0x4CAD7FC)
 # leaves as the game has them: the cloth jumped and ran fast at 90 and above.
 CLOTH_STIFFNESS=0x4D3BD00
 CLOTH_LEFT_OUT=((0xB6FBD4,0xB6FBD8),(0xB73F84,0xB73F8D),(0xB73FA8,0xB73FC1),(0x4D3BD10,0x4D3BD20))
+# Kyo's 60 and 90 lists write none of it, so their cloth ran every substep: the base's substep
+# count (0xB6E67A) and constraint caves (0xB20000-0xB43000) are added for them (cloth_writes).
+CLOTH_SUBSTEPS=0xB6E67A
+CLOTH_CAVES=(0xB20000,0xB43000)
 # The follow camera (ChrExFollowCam) eases by weights a frame (camera_fix=1 / BB_CAMERA_FIX=1: on;
 # off by default, as Awakenchan ships it: players found it trailing too far behind when running).
 # The lists store Kyo's 60 fps values for them at every rate - its constructor's immediates (field
@@ -152,6 +158,25 @@ def camera_value(field, value, frames):
     """A camera field's value for a frame `frames` of the frames it was tuned for."""
     if field==CAMERA_ANGLE or not 0<value<1: return value
     return value**frames if field==CAMERA_KEPT else 1-(1-value)**frames
+
+
+def cloth_writes(xml, app_version, segments, elf, fps, settings):
+    """The base's cloth writes for a 60 or 90 list, at a stiffness of (60/fps)^2; none uncapped,
+    with cloth_fix=0, or when the eboot has other code where the base writes."""
+    if not fps or not setting_on(settings,'cloth_fix','BB_CLOTH_FIX','1'): return []
+    if elf is None or patch_fingerprint(elf,xml,app_version,[SCALED_BASE])!=SCALED_FINGERPRINT:
+        print('Patches: cloth left as the list has it: this eboot.bin has other code where '
+              f'{SCALED_BASE} writes')
+        return []
+    out=[]
+    for offset,data in compile_patches(xml,[SCALED_BASE],app_version,segments):
+        a=offset+EBOOT_BASE
+        if a==CLOTH_SUBSTEPS or CLOTH_CAVES[0]<=a<CLOTH_CAVES[1]:
+            out.append((offset,data))
+        elif a==CLOTH_STIFFNESS:
+            out.append((offset,struct.pack('<f',(60/fps)**2)*4))
+    print(f'Patches: cloth at {fps} FPS: one solver substep a frame, stiffness {(60/fps)**2:.3f}')
+    return out
 
 
 def rate_corrections(writes, fps, elf, settings):
