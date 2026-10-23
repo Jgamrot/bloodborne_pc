@@ -1305,9 +1305,7 @@ class LauncherBackend(QObject):
         self.coopChanged.emit()
 
     def _coop_ensure_packages(self):
-        for kind in ('client', 'server'):
-            if not coop.installed(kind):
-                coop.download(kind, progress=self._coop_progress)
+        coop.ensure_packages(progress=self._coop_progress)
 
     def _coop_game_exe(self):
         for candidate in (core.PORT_DIR / 'bin' / 'bb-probe.exe', core.PORT_DIR / 'out' / 'bb-probe.exe'):
@@ -1325,8 +1323,7 @@ class LauncherBackend(QObject):
     @Slot()
     def coopSetup(self):
         def work():
-            for kind in ('client', 'server'):
-                coop.download(kind, progress=self._coop_progress)
+            coop.install_release(progress=self._coop_progress)
             return 'Co-op is set up. Host a session, or paste an invite code and play.'
         self._coop_run('Downloading BBSC…', work)
 
