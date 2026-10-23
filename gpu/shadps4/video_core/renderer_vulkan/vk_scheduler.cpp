@@ -59,6 +59,8 @@ void Scheduler::BeginRendering(const RenderState& new_state) {
     if (is_rendering && render_state == new_state) {
         return;
     }
+    const bool resume = resume_rendering && !is_rendering && render_state == new_state;
+    resume_rendering = false;
     EndRendering();
     is_rendering = true;
     render_state = new_state;
@@ -69,7 +71,8 @@ void Scheduler::BeginRendering(const RenderState& new_state) {
         color_attachments[i] = vk::RenderingAttachmentInfo{
             .imageView = cb.image_view,
             .imageLayout = cb.image_layout,
-            .loadOp = cb.is_clear ? vk::AttachmentLoadOp::eClear : vk::AttachmentLoadOp::eLoad,
+            .loadOp = cb.is_clear && !resume ? vk::AttachmentLoadOp::eClear
+                                             : vk::AttachmentLoadOp::eLoad,
             .storeOp = vk::AttachmentStoreOp::eStore,
             .clearValue = vk::ClearValue{.color = vk::ClearColorValue{.uint32 = cb.clear_value}},
         };
@@ -79,7 +82,8 @@ void Scheduler::BeginRendering(const RenderState& new_state) {
     const vk::RenderingAttachmentInfo depth_attachment = {
         .imageView = db.image_view,
         .imageLayout = db.image_layout,
-        .loadOp = db.depth_clear ? vk::AttachmentLoadOp::eClear : vk::AttachmentLoadOp::eLoad,
+        .loadOp = db.depth_clear && !resume ? vk::AttachmentLoadOp::eClear
+                                            : vk::AttachmentLoadOp::eLoad,
         .storeOp = vk::AttachmentStoreOp::eStore,
         .clearValue =
             vk::ClearValue{.depthStencil = vk::ClearDepthStencilValue{.depth = std::bit_cast<float>(
@@ -88,7 +92,8 @@ void Scheduler::BeginRendering(const RenderState& new_state) {
     const vk::RenderingAttachmentInfo stencil_attachment = {
         .imageView = db.image_view,
         .imageLayout = db.image_layout,
-        .loadOp = db.stencil_clear ? vk::AttachmentLoadOp::eClear : vk::AttachmentLoadOp::eLoad,
+        .loadOp = db.stencil_clear && !resume ? vk::AttachmentLoadOp::eClear
+                                              : vk::AttachmentLoadOp::eLoad,
         .storeOp = vk::AttachmentStoreOp::eStore,
         .clearValue = vk::ClearValue{.depthStencil =
                                          vk::ClearDepthStencilValue{.stencil = db.clear_value[1]}},

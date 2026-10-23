@@ -17,6 +17,7 @@
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/buffer_cache/buffer_cache.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
+#include "video_core/renderer_vulkan/vk_indirect_draw_guard.h"
 #include "video_core/renderer_vulkan/vk_indirect_guard.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
@@ -1243,6 +1244,21 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
         runtime.FlushBarriers();
     }
 
+    // Counts checked on the GPU first (vk_indirect_draw_guard.h), outside the render pass and
+    // before the pipeline's bindings, as for indirect dispatches.
+    vk::Buffer args = buffer->Handle();
+    u64 args_offset = base;
+    if (IndirectDrawGuard::Enabled()) {
+        if (!indirect_draw_guard) {
+            indirect_draw_guard = std::make_unique<IndirectDrawGuard>(instance, scheduler);
+        }
+        scheduler.PauseRendering();
+        if (const auto checked =
+                indirect_draw_guard->CheckArgs(*buffer, base, max_count, stride, is_indexed)) {
+            std::tie(args, args_offset) = *checked;
+        }
+    }
+
     // bbport: screen-space (clip disabled) draws into the upscaler's output-size images.
     push_data.xscale *= target_scale[0];
     push_data.xoffset *= target_scale[0];
@@ -1260,8 +1276,6 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
     ASSERT(stride == (is_indexed ? sizeof(VkDrawIndexedIndirectCommand)
                                  : sizeof(VkDrawIndirectCommand)));
     const vk::Pipeline handle = pipeline->Handle();
-    const vk::Buffer args = buffer->Handle();
-    const u64 args_offset = base;
     const vk::Buffer counts = count_address != 0 ? count_buffer->Handle() : vk::Buffer{};
     const u64 counts_offset = count_address != 0 ? count_offset : 0;
     scheduler.Record([=](vk::CommandBuffer cmdbuf) {
