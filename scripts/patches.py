@@ -93,6 +93,10 @@ EFFECT_RATE_SITES=(0x26FB39F,0x4CAD7FC)
 # leaves as the game has them: the cloth jumped and ran fast at 90 and above.
 CLOTH_STIFFNESS=0x4D3BD00
 CLOTH_LEFT_OUT=((0xB6FBD4,0xB6FBD8),(0xB73F84,0xB73F8D),(0xB73FA8,0xB73FC1),(0x4D3BD10,0x4D3BD20))
+# Grass sway (wind_fix=0 / BB_WIND_FIX=0: off): the wind query adds 1/60 a frame to each model's
+# wind time (0x4D29E70); the base instead points its loads (0x2713D91 on) at a real-dt cell.
+WIND_STEP=0x4D29E70
+WIND_LOADS=0x2713D91
 # The follow camera (ChrExFollowCam) eases by weights a frame (camera_fix=1 / BB_CAMERA_FIX=1: on;
 # off by default, as Awakenchan ships it: players found it trailing too far behind when running).
 # The lists store Kyo's 60 fps values for them at every rate - its constructor's immediates (field
@@ -161,6 +165,8 @@ def rate_corrections(writes, fps, elf, settings):
     effects=setting_on(settings,'effect_rate_fix','BB_EFFECT_RATE_FIX','1')
     cloth=bool(fps and fps>60 and setting_on(settings,'cloth_fix','BB_CLOTH_FIX','1'))
     camera=bool(fps and setting_on(settings,'camera_fix','BB_CAMERA_FIX','0'))
+    wind=bool(fps and elf is not None and setting_on(settings,'wind_fix','BB_WIND_FIX','1') and
+              not any(offset+EBOOT_BASE==WIND_LOADS for offset,_data in writes))
     out=[]
     eases=set()
     for offset,data in writes:
@@ -196,7 +202,13 @@ def rate_corrections(writes, fps, elf, settings):
                 out.append((at,f(camera_value(None,value,30/fps))))
             else:
                 print(f'Patches: camera ease at {a:#x} left alone (unexpected code)')
-    names=[n for n,on in (('effect rate',effects),('cloth',cloth),('camera',camera)) if on]
+    if wind:
+        at=WIND_STEP-EBOOT_BASE
+        if eboot_bytes(elf,at,at+4)==f(1/60):
+            out.append((at,f(1/fps)))
+        else:
+            print(f'Patches: wind step at {WIND_STEP:#x} left alone (unexpected code)')
+    names=[n for n,on in (('effect rate',effects),('cloth',cloth),('camera',camera),('wind',wind)) if on]
     print(f'Patches: frame-rate corrections: {", ".join(names) or "none"}')
     return out
 
