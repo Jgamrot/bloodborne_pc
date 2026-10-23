@@ -9,6 +9,7 @@
 #include "occlusion_queries.h"
 #include "pc_menu.h"
 #include "rebirth.h"
+#include "render_jobs.h"
 
 #include <stddef.h>
 #include <stdio.h>
@@ -28,7 +29,7 @@ static int menu_pointer_install(void) {
 
 static const Install installs[] = {bb_pc_menu_install, bb_rebirth_install, bb_mouse_camera_install,
                                    bb_key_prompts_install, menu_pointer_install,
-                                   bb_occlusion_queries_install};
+                                   bb_occlusion_queries_install, bb_render_jobs_install};
 static const Frame frames[] = {bb_pc_menu_frame, bb_menu_pointer_frame};
 
 int bb_engine_install(void) {

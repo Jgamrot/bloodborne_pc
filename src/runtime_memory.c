@@ -85,6 +85,10 @@ static int pool_fd=-1;
 static unsigned char *backing_base; /* second view of the pool: host writes bypass guest/GPU page protection */
 #define FLEX_SPAN (UINT64_C(1024) * 1024 * 1024)
 static uint64_t flex_bitmap[FLEX_SPAN/PAGE/64];
+/* The port's own direct memory follows the flexible span; the game neither sees nor allocates it. */
+static uint64_t port_bytes, port_used;
+#define PORT_BASE (POOL_SIZE+FLEX_SPAN)
+#define BACKING_SIZE (PORT_BASE+port_bytes)
 /* GPU hooks (bbgpu): notified outside the lock, in order, after each operation. */
 typedef void (*GpuRange)(uintptr_t address, uint64_t size);
 static GpuRange hook_map, hook_unmap, hook_invalidate;
@@ -304,11 +308,12 @@ static int host_protect(uintptr_t address, uint64_t size, int prot) {
 }
 /* Released pages read as zero when reused, like the memfd's punched holes. */
 static void host_discard(uint64_t phys, uint64_t size) { commit_backing(phys,size); memset(backing_base+phys,0,size); }
-/* Direct memory occupies [0,POOL_SIZE) of the section, flexible memory [POOL_SIZE,+FLEX_SPAN). */
+/* Direct memory occupies [0,POOL_SIZE) of the section, flexible memory [POOL_SIZE,+FLEX_SPAN),
+ * the port's own memory the rest. */
 static int pool_create(void) {
     if (backing_base) return 0;
     runtime_memory_reserve();
-    uint64_t bytes=POOL_SIZE+FLEX_SPAN;
+    uint64_t bytes=BACKING_SIZE;
     /* BB_GUEST_COMMIT_ON_MAP=1: the fallback below from the start (tests). */
     const char *on_map=getenv("BB_GUEST_COMMIT_ON_MAP");
     if (on_map && on_map[0]=='1') SetLastError(ERROR_COMMITMENT_LIMIT);
@@ -333,13 +338,14 @@ static int pool_create(void) {
     return -1;
 }
 #else
-/* Direct memory occupies [0,POOL_SIZE) of the memfd, flexible memory [POOL_SIZE,+FLEX_SPAN). */
+/* Direct memory occupies [0,POOL_SIZE) of the memfd, flexible memory [POOL_SIZE,+FLEX_SPAN),
+ * the port's own memory the rest. */
 static int pool_create(void) {
     if (backing_base) return 0;
     if (pool_fd<0) pool_fd=memfd_create("bb-guest-memory", MFD_CLOEXEC);
     void *view=MAP_FAILED;
-    if (pool_fd>=0 && !ftruncate(pool_fd,(off_t)(POOL_SIZE+FLEX_SPAN)))
-        view=mmap(NULL,POOL_SIZE+FLEX_SPAN,PROT_READ|PROT_WRITE,MAP_SHARED|MAP_NORESERVE,pool_fd,0);
+    if (pool_fd>=0 && !ftruncate(pool_fd,(off_t)BACKING_SIZE))
+        view=mmap(NULL,BACKING_SIZE,PROT_READ|PROT_WRITE,MAP_SHARED|MAP_NORESERVE,pool_fd,0);
     if (view==MAP_FAILED) return -1;
     backing_base=view;
     return 0;
@@ -571,6 +577,28 @@ static ABI int32_t direct_map(void **out, uint64_t size, int prot, int flags, in
 static ABI int32_t direct_map_named(void **out, uint64_t size, int prot, int flags, int64_t physical,
                                     uint64_t alignment, const char *name) {
     (void)name; return direct_map(out,size,prot,flags,physical,alignment);
+}
+int runtime_memory_port_reserve(uint64_t size) {
+    write_lock();
+    const int ok=!backing_base && !(size%PAGE);
+    if (ok) port_bytes=size;
+    write_unlock();
+    return ok ? 0 : -1;
+}
+int runtime_memory_port_map(uint64_t size, uint64_t alignment, void **out) {
+    if (!out || !size || size%PAGE || !valid_alignment(alignment)) return INVALID;
+    write_lock();
+    if (pool()) { write_unlock(); return NO_MEMORY; }
+    const uint64_t start=align_up(port_used,alignment);
+    if (start>port_bytes || size>port_bytes-start) { write_unlock(); return NO_SPACE; }
+    *out=NULL;
+    /* Write-combined, CPU and GPU read-write, as the game's own graphics memory. */
+    const int32_t result=place(out,size,0x33,0,alignment,KIND_DIRECT,3,PORT_BASE+start);
+    if (!result) { port_used=start+size; ++maps; }
+    write_unlock();
+    flush_hooks();
+    if (!result) printf("Runtime: port direct memory %p, size=%" PRIu64 " (past the game's pool)\n", *out, size);
+    return result;
 }
 static int32_t unmap_locked(uintptr_t start, uint64_t size) {
     if (start%PAGE || !size) return INVALID;
