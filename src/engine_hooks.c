@@ -160,6 +160,20 @@ int bb_main_frame_install(void) {
     return !bb_hook_entry(BB_BN(FRAME_MANAGER), frame_manager_prologue, (void *)main_frame);
 }
 
+int bb_main_frame_available(void) {
+    const uint64_t at = BB_BN(FRAME_MANAGER);
+    return bb_hooks_enabled() && g_tick_count < MAX_TICKS && in_image(at, frame_manager_prologue.n) &&
+           bb_code_is(g_image + at, frame_manager_prologue);
+}
+
+void *bb_hook_data(size_t n) {
+    if (!g_arena || !n || n > 64 || g_data_used + n > DATA_SIZE) return refuse("no data space"), NULL;
+    unsigned char *at = g_arena + CODE_SIZE + g_data_used;
+    g_data_used += (n + 15) & ~(size_t)15;
+    memset(at, 0, n);
+    return at;
+}
+
 int bb_patch(uint64_t at, const void *expected, const void *replacement, size_t n) {
     if (!bb_hooks_enabled()) return refuse("engine hooks are off (BB_ENGINE_HOOKS=0)");
     if (!expected || !replacement || !n || !in_image(at, n)) return refuse("address outside the image");

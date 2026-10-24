@@ -76,6 +76,13 @@ int bb_read(uint64_t address, void *out, size_t n);
 void bb_on_main_frame(void (*tick)(void));
 /* Installs that hook when something registered; returns 1 when it went in. */
 int bb_main_frame_install(void);
+/* Whether a tick registered now will run: the frame-time manager's entry is still the game's
+ * (Hunter's Atlas lamp travel takes it first) and there is room for one more. */
+int bb_main_frame_available(void);
+
+/* `n` (at most 64) zeroed, 16-byte aligned bytes in the stubs' writable page, within rel32 reach
+ * of the image: a value the game's code can load rip-relative. NULL when there is no room. */
+void *bb_hook_data(size_t n);
 
 /* Why the last hook was refused (static text). */
 const char *bb_hooks_error(void);
