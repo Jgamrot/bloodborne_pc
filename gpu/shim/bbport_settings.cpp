@@ -341,7 +341,7 @@ bool Online() {
     static const bool online = [] {
         const char* net = std::getenv("BB_ONLINE");
         const char* coop = std::getenv("BB_COOP");
-        return (net && !std::strcmp(net, "1")) || (coop && !std::strcmp(coop, "1"));
+        return net && !std::strcmp(net, "1") && !(coop && !std::strcmp(coop, "1"));
     }();
     return online;
 }

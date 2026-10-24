@@ -60,8 +60,8 @@ inline constexpr Effect Effects[] = {
 inline constexpr int EffectCount = int(sizeof(Effects) / sizeof(Effects[0]));
 inline constexpr int EnhancementCount = 4;
 inline constexpr int FirstEnhancement = EffectCount - EnhancementCount;
-/// Off while playing online (BB_ONLINE=1, or seamless co-op's BB_COOP=1), whatever bbport.ini
-/// says: the cheats, the free camera and the debug menu (patches.py ONLINE_BLOCKED).
+/// Off while playing online (BB_ONLINE=1, but not seamless co-op's BB_COOP=1), whatever
+/// bbport.ini says: the cheats, the free camera and the debug menu (patches.py ONLINE_BLOCKED).
 bool Online();
 bool OnlineBlocked(int effect);
 /// Live output resolutions: the upscaler's output and the UI host targets.

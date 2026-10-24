@@ -32,7 +32,7 @@ def choice_rows(options):
 
 
 # scripts/patches.py ONLINE_BLOCKED and gpu/shim/bbport_settings.cpp OnlineBlocked.
-OFF_ONLINE = "Off when playing online (The Hunter's Dream or co-op)."
+OFF_ONLINE = "Off when playing online with The Hunter's Dream (seamless co-op keeps it)."
 
 
 def row(key, label, kind='text', options=None, hint=''):

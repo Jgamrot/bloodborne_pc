@@ -449,14 +449,15 @@ class OnlineCheatTests(unittest.TestCase):
         names = {e.get('Name') for e in ET.parse(XML).getroot().iter('Metadata')}
         self.assertLessEqual(ONLINE_BLOCKED, names)
 
-    def test_offline_keeps_them(self):
+    def test_offline_and_seamless_coop_keep_them(self):
         names = effect_patches(self.CHEATS)
-        with mock.patch.dict('os.environ', {'BB_ONLINE': '0', 'BB_COOP': '0'}):
-            self.assertEqual(online_allowed(names), names)
+        for env in ({'BB_ONLINE': '0', 'BB_COOP': '0'}, {'BB_ONLINE': '1', 'BB_COOP': '1'}, {'BB_COOP': '1'}):
+            with mock.patch.dict('os.environ', env):
+                self.assertEqual(online_allowed(names), names)
 
-    def test_online_and_coop_leave_them_out(self):
+    def test_online_leaves_them_out(self):
         names = effect_patches(self.CHEATS) + ['Skip Intro', 'Cheat: infinite items']
-        for env in ({'BB_ONLINE': '1'}, {'BB_COOP': '1'}):
+        for env in ({'BB_ONLINE': '1'}, {'BB_ONLINE': '1', 'BB_COOP': '0'}):
             with mock.patch.dict('os.environ', env), redirect_stdout(io.StringIO()) as out:
                 self.assertEqual(online_allowed(names),
                                  ['Disable DoF', 'DS1-like physics', 'Skip Intro'])

@@ -30,17 +30,21 @@ int Index(const char* key) {
 }
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     using namespace BbSettings;
+    // Seamless co-op (BB_COOP=1 with BB_ONLINE=1) keeps them: the players chose to play together.
+    const bool coop = argc > 1 && !std::strcmp(argv[1], "coop");
     const auto path = std::filesystem::temp_directory_path() /
         ("bb-online-settings-" + std::to_string(
             std::chrono::steady_clock::now().time_since_epoch().count()) + ".ini");
 #ifdef _WIN32
     _putenv_s("BB_CONFIG", path.string().c_str());
     _putenv_s("BB_ONLINE", "1");
+    _putenv_s("BB_COOP", coop ? "1" : "");
 #else
     setenv("BB_CONFIG", path.string().c_str(), 1);
     setenv("BB_ONLINE", "1", 1);
+    setenv("BB_COOP", coop ? "1" : "", 1);
 #endif
     {
         std::ofstream file(path);
@@ -48,6 +52,15 @@ int main() {
                 "tweak_no_rally=1\npc_two_invaders=1\n";
     }
     Load();
+    if (coop) {
+        assert(!Online() && !OnlineBlocked(Index("cheat_no_stamina")));
+        assert(Setting("cheat_no_stamina") == 1 && Setting("debug_camera") == 1);
+        bbgpu_setting_set("cheat_no_death", 1);
+        assert(Setting("cheat_no_death") == 1);
+        std::filesystem::remove(path);
+        std::puts("online settings (co-op): ok");
+        return 0;
+    }
     assert(Online());
     for (const char* key : {"cheat_no_stamina", "cheat_stamina_out_of_combat", "debug_camera",
                             "debug_menu", "cheat_no_death"}) {
@@ -72,5 +85,7 @@ int main() {
     bbgpu_setting_set("tweak_no_rally", 0);
     assert(Setting("tweak_no_rally") == 0);
     std::filesystem::remove(path);
+    const std::string again = std::string("\"") + argv[0] + "\" coop";
+    assert(std::system(again.c_str()) == 0);
     std::puts("online settings: ok");
 }

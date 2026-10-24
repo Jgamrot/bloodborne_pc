@@ -269,8 +269,8 @@ EFFECTS={
     # parsifal295, Supermedo/bloodborne_pc PR #17.
     'tweak_circle_confirm':(None,'Circle Confirm (Japanese/Asian button layout)'),
 }
-# Left out online (BB_ONLINE=1 or BB_COOP=1), whatever bbport.ini, BB_PATCHES or a third-party
-# file asks for; the live stamina cheats are off there too (bbport_settings.cpp OnlineBlocked).
+# Left out online (BB_ONLINE=1; not seamless co-op's BB_COOP=1, among players who chose it),
+# whatever bbport.ini, BB_PATCHES or a third-party file asks for; the live stamina cheats are off there too (bbport_settings.cpp OnlineBlocked).
 ONLINE_BLOCKED={EFFECTS[key][1] for key in EFFECTS if key.startswith(('cheat_','debug_'))}
 # model_lod: -2 highest, 0 the game's, 1 lower, 2 lowest.
 MODEL_LOD={'-2':'Model LOD -2 (Highest)','1':'Model LOD 1 (Lower)','2':'Model LOD 2 (Lowest)'}
@@ -356,7 +356,7 @@ def validate_patch_requirements(names, game):
 
 
 def online():
-    return os.environ.get('BB_ONLINE')=='1' or os.environ.get('BB_COOP')=='1'
+    return os.environ.get('BB_ONLINE')=='1' and os.environ.get('BB_COOP')!='1'
 
 
 def online_allowed(names):
