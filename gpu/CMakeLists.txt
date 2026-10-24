@@ -145,6 +145,35 @@ add_custom_target(host_shaders DEPENDS ${SHADER_HEADERS})
 file(GLOB_RECURSE VIDEO_CORE CONFIGURE_DEPENDS shadps4/video_core/*.cpp)
 file(GLOB_RECURSE RECOMPILER CONFIGURE_DEPENDS shadps4/shader_recompiler/*.cpp)
 list(FILTER VIDEO_CORE EXCLUDE REGEX "renderdoc\\.cpp$")
+
+# Shader build: a fingerprint of the sources that decide what the pipeline cache holds, kept in
+# the cache (vk_pipeline_serialization.cpp). Line ends do not count (CRLF and LF checkouts agree).
+file(GLOB_RECURSE BB_SHADER_BUILD_SOURCES CONFIGURE_DEPENDS
+    shadps4/shader_recompiler/*
+    shadps4/video_core/amdgpu/regs*.h shadps4/video_core/amdgpu/pixel_format.h
+    shadps4/video_core/amdgpu/resource.h
+    shadps4/video_core/renderer_vulkan/vk_pipeline_*.cpp shadps4/video_core/renderer_vulkan/vk_pipeline_*.h
+    shadps4/video_core/renderer_vulkan/vk_graphics_pipeline.*
+    shadps4/video_core/renderer_vulkan/vk_compute_pipeline.*
+    shadps4/video_core/renderer_vulkan/vk_shader_prebuild.*
+    shadps4/video_core/renderer_vulkan/vk_shader_util.*
+    shadps4/common/serdes.h)
+list(SORT BB_SHADER_BUILD_SOURCES)
+set(BB_SHADER_BUILD_HASHES "")
+foreach(source IN LISTS BB_SHADER_BUILD_SOURCES)
+    file(READ "${source}" content)
+    string(REPLACE "\r" "" content "${content}")
+    file(RELATIVE_PATH name "${CMAKE_CURRENT_SOURCE_DIR}" "${source}")
+    string(SHA256 hash "${name}\n${content}")
+    string(APPEND BB_SHADER_BUILD_HASHES "${hash}\n")
+endforeach()
+string(SHA256 BB_SHADER_BUILD "${BB_SHADER_BUILD_HASHES}")
+string(SUBSTRING "${BB_SHADER_BUILD}" 0 16 BB_SHADER_BUILD)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${BB_SHADER_BUILD_SOURCES})
+file(CONFIGURE OUTPUT "${SHADER_INCLUDE}/video_core/shader_build.h"
+    CONTENT "#pragma once\n#define BB_SHADER_BUILD \"@BB_SHADER_BUILD@\"\n" @ONLY)
+list(LENGTH BB_SHADER_BUILD_SOURCES BB_SHADER_BUILD_COUNT)
+message(STATUS "Shader build ${BB_SHADER_BUILD} (from ${BB_SHADER_BUILD_COUNT} sources)")
 set(COMMON
     shadps4/common/decoder.cpp shadps4/common/error.cpp
     shadps4/common/io_file.cpp shadps4/common/native_clock.cpp shadps4/common/number_utils.cpp
