@@ -267,7 +267,7 @@ if (WIN32)
     add_library(atrac9 STATIC ${BB_ATRAC9})
     target_compile_options(atrac9 PRIVATE -w)
     set_target_properties(atrac9 PROPERTIES C_STANDARD 99 INTERPROCEDURAL_OPTIMIZATION OFF)
-    add_executable(bb-probe ../src/probe.c ${BB_RUNTIME} ../src/compat_win.c ../src/vulkan_smoke.c
+    add_executable(bb-probe ../src/probe.c ${BB_RUNTIME} ../src/compat_win.c ../src/vulkan_smoke.c ../src/cloth_rate.c
         ../src/engine_hooks.c ../src/engine_features.c ../src/pc_menu.c ../src/rebirth.c ../src/input_bindings.c ../src/mouse_camera.c ../src/key_prompts.c ../src/menu_pointer.c
         ../src/occlusion_queries.c ../packaging/windows/bb-probe.rc)
     target_sources(bb-probe PRIVATE ../src/aspect_ratio.cpp)
@@ -303,6 +303,9 @@ if (WIN32)
     target_include_directories(trophy-history-test PRIVATE .. ../src)
     target_compile_options(trophy-history-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
     target_link_libraries(trophy-history-test PRIVATE -pthread)
+    add_executable(cloth-rate-test EXCLUDE_FROM_ALL ../tests/test_cloth_rate.c ../src/engine_hooks.c)
+    target_include_directories(cloth-rate-test PRIVATE ../src)
+    target_compile_options(cloth-rate-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
     add_executable(respawn-patch-test EXCLUDE_FROM_ALL ../tests/test_respawn_patch.c)
     target_include_directories(respawn-patch-test PRIVATE ../src)
     target_compile_options(respawn-patch-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
