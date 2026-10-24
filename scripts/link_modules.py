@@ -330,9 +330,21 @@ def link(game, out, module_names=DEFAULT_MODULES):
             print(f"CPU compatibility EXPERIMENTAL: {cpu_compat['span_patches']} count instructions translated "
                   'as signed two-instruction spans; their MOV/CMP neighbors are preserved. '
                   'Global indirect entries remain unproven.')
+        if cpu_compat['short_span_patches']:
+            print(f"CPU compatibility: {cpu_compat['short_span_patches']} short instructions translated with "
+                  'their neighbors moved along (no jump into them was found; BB_LEGACY_CPU_SHORT_SITES=0 '
+                  'leaves them out).')
+        if cpu_compat['simulated_bsr_sites']:
+            print(f"CPU compatibility TEST: {cpu_compat['simulated_bsr_sites']} untranslated LZCNT/TZCNT "
+                  'rewritten to BSR/BSF, as an Ivy Bridge CPU runs them (BB_LEGACY_CPU_SIMULATE_BSR=1).')
+        elif os.environ.get('BB_LEGACY_CPU_SIMULATE_BSR') == '1':
+            print('CPU compatibility TEST: no untranslated LZCNT/TZCNT to rewrite '
+                  '(BB_LEGACY_CPU_SHORT_SITES=0 leaves the short ones untranslated).')
         if cpu_compat['semantic_risk_sites']:
             print(f"CPU compatibility EXPERIMENTAL: {cpu_compat['semantic_risk_sites']} count instructions "
                   'can still have incorrect semantics; this is not a complete compatibility profile.')
+    elif os.environ.get('BB_LEGACY_CPU_SIMULATE_BSR') == '1':
+        print('CPU compatibility TEST: BB_LEGACY_CPU_SIMULATE_BSR=1 needs BB_LEGACY_CPU=1; nothing rewritten.')
     if red_zone['enabled']:
         print(f"Red zone: {red_zone['sites']}/{red_zone['available']} guest store sites run red-zone-safe "
               f"({len(red_zone['cpu_overlaps'])} left to CPU translations; BB_RED_ZONE=0 disables)")

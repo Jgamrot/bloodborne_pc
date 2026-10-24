@@ -223,6 +223,14 @@ page take precedence:
 | Xbox pads: Back + d-pad left/right for the touchpad halves | | `BB_PAD_BACK_COMBO=0` |
 | Skip draws that cannot change anything | | `BB_SKIP_EMPTY_DRAWS=0` |
 | All engine hooks (in-game menus and features) | | `BB_ENGINE_HOOKS=0` |
+| Legacy CPU translations (on by themselves on CPUs without BMI1, LZCNT or MOVBE) | `legacy_cpu=0` or `1` | `BB_LEGACY_CPU=0` or `1` |
+
+For testing the legacy CPU translations only, not for play:
+
+| Test | Override |
+|---|---|
+| Leave the short instructions untranslated, as in 2.1 (135 LZCNT/TZCNT, 58 MOVBE) | `BB_LEGACY_CPU_SHORT_SITES=0` |
+| Run untranslated LZCNT/TZCNT as BSR/BSF, as an Ivy Bridge CPU does, on a newer CPU (with `BB_LEGACY_CPU=1`) | `BB_LEGACY_CPU_SIMULATE_BSR=1` |
 
 ## Known issues
 
