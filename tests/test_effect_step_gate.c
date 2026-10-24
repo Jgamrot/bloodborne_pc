@@ -531,11 +531,12 @@ static void check_holds(void) {
     frame_where(1.0f / 60, 0, -1.0f);
     put32(addr(receivers) + 0x50, 60);
     receivers[0x4d] = receivers[0x4c] = 1;
-    assert(frame(1.0f / 60).between);
+    const uint64_t whole = bb_effect_whole_steps();
+    assert(frame(1.0f / 60).between && bb_effect_whole_steps() == whole);
     assert(get32(addr(receivers) + 0x50) == 60 && receivers[0x4d] == 1 && receivers[0x4c] == 0);
 
-    /* A whole step: the game's everywhere. */
-    assert(!frame(1.0f / 60).between && !bb_effect_held());
+    /* A whole step: the game's everywhere, and counted for the water. */
+    assert(!frame(1.0f / 60).between && !bb_effect_held() && bb_effect_whole_steps() == whole + 1);
     assert(get32(addr(receivers) + 0x50) == 59);
     reset_node(1, 1.5f, 0.25f);
     assert(update_node(BB_EFFECT_WHOLE_STEP) == 7 && g_node_calls == 1);

@@ -125,6 +125,8 @@ typedef void (BB_GUEST_ABI *StepFn)(uint64_t, float);
 static atomic_int g_between;
 static double g_carry;
 static BbGateState g_state;
+/* Read by the water's update on the scene renderer's side. */
+static _Atomic uint64_t g_whole;
 
 static uint64_t guest(uint64_t bn) { return (uint64_t)(uintptr_t)bb_guest(BB_BN(bn)); }
 static uint64_t read64(uint64_t at) {
@@ -148,6 +150,7 @@ static void write_float(uint64_t at, float v) { memcpy((void *)(uintptr_t)at, &v
 static int held(void) { return atomic_load_explicit(&g_between, memory_order_relaxed); }
 int bb_effect_held(void) { return held(); }
 BbGateState bb_effect_step_gate_state(void) { return g_state; }
+uint64_t bb_effect_whole_steps(void) { return atomic_load_explicit(&g_whole, memory_order_acquire); }
 
 static BB_GUEST_ABI uint64_t on_effects(uint64_t manager, float step) {
     const uint64_t sfx = read64(guest(SFX));
@@ -156,6 +159,7 @@ static BB_GUEST_ABI uint64_t on_effects(uint64_t manager, float step) {
     BbEffectFrame frame = {step, 0.0f, 0.0f, 0.0f, 0, 0};
     if (sprj && !read32(sfx + 0x8c)) frame = bb_effect_frame(&g_carry, step);
     atomic_store_explicit(&g_between, frame.between, memory_order_relaxed);
+    if (sprj && !frame.between) atomic_fetch_add_explicit(&g_whole, 1, memory_order_release);
     if (sprj) bb_smooth_begin(manager, &frame);
     const uint64_t result = ((ManagerFn)bb_guest(BB_BN(MANAGER_UPDATE)))(manager, frame.step);
     if (sprj) bb_smooth_end();

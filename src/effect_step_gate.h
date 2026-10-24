@@ -6,6 +6,8 @@
 #ifndef BB_EFFECT_STEP_GATE_H
 #define BB_EFFECT_STEP_GATE_H
 
+#include <stdint.h>
+
 /* Checks every site and hooks them, unless the effects already step 1/30 s a frame (30 FPS);
  * returns hooks added (0 when refused or not needed). */
 int bb_effect_step_gate_install(void);
@@ -16,6 +18,8 @@ typedef enum { BB_GATE_OFF, BB_GATE_ON, BB_GATE_AT_THIRTY } BbGateState;
 BbGateState bb_effect_step_gate_state(void);
 /* SprjSfx's last effect frame took no whole step. */
 int bb_effect_held(void);
+/* SprjSfx's effect frames so far that took a whole step (or the game's own). */
+uint64_t bb_effect_whole_steps(void);
 
 /* The game's own effect step at 30 FPS. */
 #define BB_EFFECT_WHOLE_STEP (1.0f / 30.0f)

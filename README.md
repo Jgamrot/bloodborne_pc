@@ -219,6 +219,7 @@ page take precedence:
 | High-FPS effects in whole 1/30 s steps (effects that never ended, such as Ebrietas' rocks) | | `BB_EFFECT_STEP_GATE=0` |
 | High-FPS effects that move by each frame's time while counting in whole steps (smooth steps) | | `BB_EFFECT_SMOOTH=0` |
 | High-FPS torch, brazier and candle flicker at 30's pace (with the effect step gate) | | `BB_BLINK_HOLD=0` |
+| High-FPS wakes in water spreading at 30's pace (with the effect step gate) | | `BB_WATER_GATE=0` |
 | Ultrawide camera and centered HUD (non-16:9 outputs) | `output_res=16:9 size` | `BB_ASPECT=0` |
 | Indirect dispatch guard (skips implausible GPU work counts) | | `BB_INDIRECT_GUARD=0` |
 | Pad stick neutral and travel per controller (clone pads) | | `BB_PAD_CENTER_CAL=0`, `BB_PAD_DEADZONE`, `BB_PAD_CENTER` |
