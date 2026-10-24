@@ -398,6 +398,11 @@ add_executable(output-settings-test EXCLUDE_FROM_ALL ../tests/test_output_settin
 target_include_directories(output-settings-test PRIVATE shim)
 target_compile_options(output-settings-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 
+add_executable(online-settings-test EXCLUDE_FROM_ALL ../tests/test_online_settings.cpp
+    shim/bbport_settings.cpp)
+target_include_directories(online-settings-test PRIVATE shim)
+target_compile_options(online-settings-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+
 if (WIN32)
     add_executable(aspect-thunk-test EXCLUDE_FROM_ALL ../tests/test_aspect_thunk.cpp)
     target_compile_options(aspect-thunk-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)

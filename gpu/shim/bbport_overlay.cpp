@@ -1010,8 +1010,12 @@ void ModsTab() {
         const char* label = BbSettings::Effects[e].label;
         if (!std::strncmp(label, "Cheat: ", 7)) label += 7;
         const std::string shown = std::string(1, char(std::toupper((unsigned char)label[0]))) + (label + 1);
+        ImGui::BeginDisabled(BbSettings::OnlineBlocked(e));
         Checkbox(shown.c_str(), s.effects[e]);
+        ImGui::EndDisabled();
     }
+    if (BbSettings::Online())
+        Note("Playing online: cheats, the free camera and the debug menu are off.", Ink::Faint);
     if (!native)
         Hint("Free camera: hold Cross/A and press L3 (keyboard: E + Left Ctrl). The debug menu needs DbgFont14h.ccm and DbgFont14h.tpf in dvdroot_ps4/font.");
     Section("PC enhancements (restart required)");
