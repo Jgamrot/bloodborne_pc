@@ -8,9 +8,6 @@
 
 #include <stdint.h>
 
-/* A frame between whole steps that the gate holds (effect_step_gate.c). */
-int bb_effect_held(void);
-
 /* Whether the smooth steps go in: BB_EFFECT_SMOOTH is not 0 and every site they read is as
  * expected (one log line when not). Called before the gate writes anything. */
 int bb_smooth_wanted(void);

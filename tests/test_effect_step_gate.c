@@ -478,7 +478,7 @@ static void check_holds(void) {
     /* A node of no converted class: the gate's holds. */
     put64(addr(motion), at(EULER) + 8);
     const BbEffectFrame between = frame_where(1.0f / 60, 1, -1.0f);
-    assert(between.split);
+    assert(between.split && bb_effect_held());
     reset_node(1, 1.5f, 0.25f);
     assert(update_node(0.0f) == 1 && g_node_calls == 0 && g_container.calls == 2);
     assert(g_container.step[0] == 0.0f && g_container.step[1] == 0.0f && g_container.context[1] == ctx);
@@ -535,7 +535,7 @@ static void check_holds(void) {
     assert(get32(addr(receivers) + 0x50) == 60 && receivers[0x4d] == 1 && receivers[0x4c] == 0);
 
     /* A whole step: the game's everywhere. */
-    assert(!frame(1.0f / 60).between);
+    assert(!frame(1.0f / 60).between && !bb_effect_held());
     assert(get32(addr(receivers) + 0x50) == 59);
     reset_node(1, 1.5f, 0.25f);
     assert(update_node(BB_EFFECT_WHOLE_STEP) == 7 && g_node_calls == 1);
@@ -772,7 +772,7 @@ static void check_game(void) {
     /* The effects stepping 1/30 s a frame: nothing hooked. */
     build_fixture(1.0f / 30);
     assert(bb_hooks_init(g_image, IMAGE) == 0);
-    assert(bb_effect_step_gate_install() == 0);
+    assert(bb_effect_step_gate_install() == 0 && bb_effect_step_gate_state() == BB_GATE_AT_THIRTY);
     assert(get64(at(MANAGER_SLOT)) == at(MANAGER_UPDATE) && get64(at(LIGHT_SLOT)) == at(LIGHT_UPDATE));
     assert(calls_to(NODE_CALL, NODE_UPDATE) && calls_to(CONTAINER_LAST, CONTAINER_UPDATE));
 
@@ -780,7 +780,7 @@ static void check_game(void) {
     build_fixture(1.0f / 30);
     const unsigned char uncapped[] = {0xeb, 0xa2};
     memcpy(g_image + BB_BN(STEP_LOAD), uncapped, sizeof(uncapped));
-    assert(bb_effect_step_gate_install() == 16);
+    assert(bb_effect_step_gate_install() == 16 && bb_effect_step_gate_state() == BB_GATE_ON);
 
     /* BB_EFFECT_SMOOTH=0: the gate's sites only. */
     build_fixture(1.0f / 60);
@@ -843,10 +843,10 @@ int main(void) {
     }
     /* Another image is refused with nothing written; the switch turns it off. */
     assert(bb_hooks_init(g_image, IMAGE) == 0);
-    assert(bb_effect_step_gate_install() == 0);
+    assert(bb_effect_step_gate_install() == 0 && bb_effect_step_gate_state() == BB_GATE_OFF);
     for (size_t i = 0; i < IMAGE; ++i) assert(!g_image[i]);
     _putenv("BB_EFFECT_STEP_GATE=0");
-    assert(bb_effect_step_gate_install() == 0);
+    assert(bb_effect_step_gate_install() == 0 && bb_effect_step_gate_state() == BB_GATE_OFF);
     puts("effect step gate: ok (BB_TEST_EBOOT_ELF unset: the game's code not checked)");
     return 0;
 }

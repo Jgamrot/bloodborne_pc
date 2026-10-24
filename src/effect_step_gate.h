@@ -10,6 +10,13 @@
  * returns hooks added (0 when refused or not needed). */
 int bb_effect_step_gate_install(void);
 
+/* What the install made of the game, for the features that follow its schedule (the GX lights'
+ * blink, the water's wave steps): they go in only when it is on. */
+typedef enum { BB_GATE_OFF, BB_GATE_ON, BB_GATE_AT_THIRTY } BbGateState;
+BbGateState bb_effect_step_gate_state(void);
+/* SprjSfx's last effect frame took no whole step. */
+int bb_effect_held(void);
+
 /* The game's own effect step at 30 FPS. */
 #define BB_EFFECT_WHOLE_STEP (1.0f / 30.0f)
 
