@@ -138,10 +138,11 @@ void PrepareVertexInputs(const Shader::Info& vs, const Shader::Gcn::FetchShaderD
         // The V# may come from user data the guest is still writing: an unknown format leaves
         // the inputs to the GPU thread, which reads them once the draw is submitted (the
         // assertion in SurfaceFormat stopped the process here).
+        const auto input = Shader::Gcn::GetVertexInputFormat(buffer);
         const vk::Format format =
-            LiverpoolToVK::TrySurfaceFormat(buffer.GetDataFmt(), buffer.GetNumberFmt());
+            LiverpoolToVK::TrySurfaceFormat(input.data_format, input.num_format);
         if (format == vk::Format::eUndefined &&
-            buffer.GetDataFmt() != AmdGpu::DataFormat::FormatInvalid) {
+            input.data_format != AmdGpu::DataFormat::FormatInvalid) {
             out.valid = false;
             return;
         }
@@ -153,7 +154,7 @@ void PrepareVertexInputs(const Shader::Info& vs, const Shader::Gcn::FetchShaderD
         });
         bindings.push_back({
             .binding = attrib.semantic,
-            .stride = buffer.GetStride(),
+            .stride = input.stride,
             .inputRate = step_rate == InstanceIdType::None ? vk::VertexInputRate::eVertex
                                                            : vk::VertexInputRate::eInstance,
             .divisor = step_rate == InstanceIdType::OverStepRate0 ? regs.vgt_instance_step_rate_0

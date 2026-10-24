@@ -448,15 +448,16 @@ void GraphicsPipeline::GetVertexInputs(
     for (const auto& attrib : fetch_shader->attributes) {
         const auto step_rate = attrib.GetStepRate();
         const auto buffer = attrib.GetSharp(vs_info);
+        const auto input = Shader::Gcn::GetVertexInputFormat(buffer);
         attributes.push_back(Attribute{
             .location = attrib.semantic,
             .binding = attrib.semantic,
-            .format = LiverpoolToVK::SurfaceFormat(buffer.GetDataFmt(), buffer.GetNumberFmt()),
+            .format = LiverpoolToVK::SurfaceFormat(input.data_format, input.num_format),
             .offset = 0,
         });
         bindings.push_back(Binding{
             .binding = attrib.semantic,
-            .stride = buffer.GetStride(),
+            .stride = input.stride,
             .inputRate = step_rate == InstanceIdType::None ? vk::VertexInputRate::eVertex
                                                            : vk::VertexInputRate::eInstance,
         });

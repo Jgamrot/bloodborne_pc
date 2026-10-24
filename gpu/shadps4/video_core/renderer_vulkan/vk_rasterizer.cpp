@@ -1727,6 +1727,40 @@ void Rasterizer::EmitVertexBuffers() {
     });
 }
 
+// bbport: the first draws whose vertex attributes have a V# without records (a zeroed V# was a
+// VK_FORMAT_UNDEFINED attribute before BB_NULL_VERTEX_INPUT; an NVIDIA device loss followed).
+static void NoteNullVertexInputs(const GraphicsPipeline* pipeline,
+                                 std::span<const AmdGpu::Buffer> buffers) {
+    static std::atomic<u32> reports{0};
+    if (reports.load(std::memory_order_relaxed) >= 8 ||
+        std::ranges::none_of(buffers, [](const AmdGpu::Buffer& b) { return !b; })) {
+        return;
+    }
+    if (reports.fetch_add(1, std::memory_order_relaxed) >= 8) {
+        return;
+    }
+    const bool fixed = Shader::Gcn::IsNullVertexInput(AmdGpu::Buffer{});
+    std::string list;
+    for (u32 i = 0; i < buffers.size(); ++i) {
+        const auto& b = buffers[i];
+        if (b) {
+            continue;
+        }
+        const auto input = Shader::Gcn::GetVertexInputFormat(b, false);
+        list += fmt::format(" [{}: address {:#x} stride {} format {}/{} -> {}]", i,
+                            u64(b.base_address), u32(b.stride), u32(b.data_format),
+                            u32(b.num_format),
+                            vk::to_string(LiverpoolToVK::TrySurfaceFormat(input.data_format,
+                                                                          input.num_format)));
+    }
+    std::printf("Vertex input: vs %#llx draws %zu attributes, null V#s (no records):%s; %s\n",
+                static_cast<unsigned long long>(
+                    pipeline->GetStage(Shader::SwStage::Vertex).pgm_hash),
+                buffers.size(), list.c_str(),
+                fixed ? "bound as zero float4 from no buffer"
+                      : "bound with their own format (BB_NULL_VERTEX_INPUT=0)");
+}
+
 void Rasterizer::ResolveVertexBuffers(const GraphicsPipeline* pipeline,
                                       const PreparedDraw* prepared) {
     const auto& regs = Regs();
@@ -1854,8 +1888,9 @@ void Rasterizer::ResolveVertexBuffers(const GraphicsPipeline* pipeline,
             host_offsets.push_back(0);
         }
         host_sizes.push_back(buffer.GetSize());
-        host_strides.push_back(buffer.GetStride());
+        host_strides.push_back(Shader::Gcn::GetVertexInputFormat(buffer).stride);
     }
+    NoteNullVertexInputs(pipeline, {guest_buffers.data(), guest_buffers.size()});
 
     v.num_buffers = static_cast<u32>(guest_buffers.size());
 }
