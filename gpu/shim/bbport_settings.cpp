@@ -240,7 +240,8 @@ bool ResolutionNeedsRestart() {
 
 void Save() {
     const auto& v = Get();
-    // Lines this function does not write (keys other tools own, such as pc_menu) are kept.
+    // Lines this function does not write (keys other tools own, such as pc_menu) are kept, once
+    // each: a key repeated in the file keeps its last line, the one Load() applies.
     std::vector<std::string> kept;
     if (FILE* old = std::fopen(Path(), "r")) {
         char line[256];
@@ -255,12 +256,17 @@ void Save() {
                                      "object_motion", "reactive_scale", "reactive_threshold", "reactive_max",
                                      "debug_view", "show_fps", "fsr4_auto_exposure", "fsr4_invert_jitter",
                                      "model_lod", "output_res", "live_resolution",
+                                     "frame_gen", "frame_gen_multiplier", "frame_gen_fit_display",
                                      "mouse_camera", "mouse_sensitivity", "mouse_invert_y", "mouse_menu",
                                      "mouse_hide_cursor", "mouse_flick_threshold"}) {
                 ours |= key == name;
             }
             for (int e = 0; e < EffectCount; ++e) ours |= key == Effects[e].key;
-            if (!ours) kept.push_back(text);
+            if (ours) continue;
+            std::erase_if(kept, [&](const std::string& old) {
+                return old.compare(0, eq + 1, text, 0, eq + 1) == 0;
+            });
+            kept.push_back(text);
         }
         std::fclose(old);
     }

@@ -476,15 +476,20 @@ def load_ini():
 
 
 def save_ini(values, lines):
-    """Rewrites the edited keys in place, appends missing ones, keeps comments and other keys."""
+    """Rewrites the edited keys in place, appends missing ones, keeps comments and other keys.
+    A repeated key is written once: an edited one at its first line, another at its last."""
+    keys = [line.split('=', 1)[0].strip() if '=' in line and not line.lstrip().startswith('#') else None
+            for line in lines]
+    last = {key: i for i, key in enumerate(keys)}
     written, out = set(), []
-    for line in lines:
-        if '=' in line and not line.lstrip().startswith('#'):
-            key = line.split('=', 1)[0].strip()
-            if key in values:
+    for i, (line, key) in enumerate(zip(lines, keys)):
+        if key in values:
+            if key not in written:
                 out.append(f'{key}={values[key]}')
                 written.add(key)
-                continue
+            continue
+        if key is not None and last[key] != i:
+            continue  # a later line sets it, as load_ini reads it
         out.append(line)
     if not lines:
         out.append('# bbport settings (in-game menu: Insert / L3+R3)')
