@@ -54,7 +54,7 @@ static const BindInfo INFO[BIND_COUNT] = {
     {"l3", "Left Stick Press", PAD_L3, "Left Ctrl", 0},
 };
 
-static int g_key[BIND_COUNT], g_mouse[BIND_COUNT];
+static BindSlot g_slot[BIND_COUNT][BIND_SLOTS];
 /* Movement smoothing: travel per 1/60 s as a share of a full push (1: off), and the stick. */
 #define MOVE_SMOOTHING_DEFAULT 0.6f
 static float g_move_step = MOVE_SMOOTHING_DEFAULT, g_move_x, g_move_y;
@@ -62,16 +62,62 @@ static double g_move_angle;
 static bool g_move_active;
 static uint64_t g_move_time;
 
-const BindInfo *bb_bind_info(int action) { return action >= 0 && action < BIND_COUNT ? &INFO[action] : NULL; }
-int bb_binding_key(int action) { return action >= 0 && action < BIND_COUNT ? g_key[action] : 0; }
-int bb_binding_mouse(int action) { return action >= 0 && action < BIND_COUNT ? g_mouse[action] : 0; }
-
 static const char *const MOUSE_NAMES[] = {NULL, "mouse1", "mouse2", "mouse3", "mouse4", "mouse5", "wheelup", "wheeldown"};
+
+const BindInfo *bb_bind_info(int action) { return action >= 0 && action < BIND_COUNT ? &INFO[action] : NULL; }
+
+static bool is_mouse(int input) { return input < 0 && input >= -MOUSE_WHEEL_DOWN; }
+
+int bb_binding_key(int action) {
+    if (action < 0 || action >= BIND_COUNT) return 0;
+    for (int s = 0; s < BIND_SLOTS; ++s) {
+        const BindSlot *b = &g_slot[action][s];
+        if (b->n == 1 && b->in[0] > 0) return b->in[0];
+    }
+    return 0;
+}
+
+int bb_binding_mouse(int action) {
+    if (action < 0 || action >= BIND_COUNT) return 0;
+    for (int s = 0; s < BIND_SLOTS; ++s) {
+        const BindSlot *b = &g_slot[action][s];
+        if (b->n == 1 && is_mouse(b->in[0])) return -b->in[0];
+    }
+    return 0;
+}
+
+int bb_binding_slots(int action, BindSlot *out, int max_slots) {
+    if (action < 0 || action >= BIND_COUNT || !out || max_slots <= 0) return 0;
+    int count = 0;
+    for (int s = 0; s < BIND_SLOTS; ++s) {
+        if (!g_slot[action][s].n) continue;
+        if (count < max_slots) out[count] = g_slot[action][s];
+        ++count;
+    }
+    return count;
+}
+
+static void clear_slots(int action) {
+    for (int s = 0; s < BIND_SLOTS; ++s) {
+        g_slot[action][s].n = 0;
+        for (int i = 0; i < BIND_COMBO_PARTS; ++i) g_slot[action][s].in[i] = 0;
+    }
+}
 
 static void defaults(void) {
     for (int a = 0; a < BIND_COUNT; ++a) {
-        g_key[a] = INFO[a].def_key ? (int)SDL_GetScancodeFromName(INFO[a].def_key) : 0;
-        g_mouse[a] = INFO[a].def_mouse;
+        clear_slots(a);
+        const int key = INFO[a].def_key ? (int)SDL_GetScancodeFromName(INFO[a].def_key) : 0;
+        if (key) {
+            g_slot[a][0].n = 1;
+            g_slot[a][0].in[0] = key;
+        }
+        if (INFO[a].def_mouse) {
+            /* A key and a mouse button both bound: either one presses it, as before. */
+            const int slot = key ? 1 : 0;
+            g_slot[a][slot].n = 1;
+            g_slot[a][slot].in[0] = -INFO[a].def_mouse;
+        }
     }
 }
 
@@ -83,33 +129,60 @@ static void trim(char *s) {
     memmove(s, s + i, strlen(s + i) + 1);
 }
 
+/* One input of a binding: its SDL scancode when it is a key, minus its number for a mouse
+ * input, 0 for "none" or a name SDL does not know. */
+static int input_from_name(const char *part) {
+    char lower[64];
+    size_t i = 0;
+    for (; part[i] && i + 1 < sizeof(lower); ++i) lower[i] = (char)tolower((unsigned char)part[i]);
+    lower[i] = 0;
+    if (!strcmp(lower, "none") || !*lower) return 0;
+    for (int k = 1; k <= MOUSE_WHEEL_DOWN; ++k)
+        if (!strcmp(lower, MOUSE_NAMES[k])) return -k;
+    const int scancode = (int)SDL_GetScancodeFromName(part);
+    return scancode > 0 ? scancode : 0;
+}
+
 bool bb_bindings_parse(const char *action, const char *value) {
     int a = 0;
     while (a < BIND_COUNT && strcmp(INFO[a].key, action)) ++a;
     if (a == BIND_COUNT) return false;
-    int key = 0, mouse = 0;
-    char copy[128];
+    clear_slots(a);
+    char copy[192];
     snprintf(copy, sizeof(copy), "%s", value);
-    for (char *part = strtok(copy, ","); part; part = strtok(NULL, ",")) {
-        trim(part);
-        char lower[64];
-        size_t i = 0;
-        for (; part[i] && i + 1 < sizeof(lower); ++i) lower[i] = (char)tolower((unsigned char)part[i]);
-        lower[i] = 0;
-        if (!strcmp(lower, "none") || !*lower) continue;
-        int m = 0;
-        for (int k = 1; k <= MOUSE_WHEEL_DOWN; ++k)
-            if (!strcmp(lower, MOUSE_NAMES[k])) m = k;
-        if (m) mouse = m;
-        else key = (int)SDL_GetScancodeFromName(part);
+    /* Commas separate bindings, '+' joins the inputs of one: split by hand, so the outer and
+     * the inner split do not fight over strtok's state. */
+    int slot = 0;
+    for (char *cursor = copy; *cursor && slot < BIND_SLOTS;) {
+        char *comma = strchr(cursor, ',');
+        if (comma) *comma = 0;
+        BindSlot next = {0, {0}};
+        for (char *part = cursor; *part && next.n < BIND_COMBO_PARTS;) {
+            char *plus = strchr(part, '+');
+            if (plus) *plus = 0;
+            trim(part);
+            const int input = input_from_name(part);
+            if (input) next.in[next.n++] = input;
+            if (!plus) break;
+            part = plus + 1;
+        }
+        if (next.n) g_slot[a][slot++] = next;
+        if (!comma) break;
+        cursor = comma + 1;
     }
-    /* One key, one action: whatever else had it gives it up. */
-    for (int b = 0; b < BIND_COUNT && key; ++b)
-        if (b != a && g_key[b] == key) g_key[b] = 0;
-    for (int b = 0; b < BIND_COUNT && mouse; ++b)
-        if (b != a && g_mouse[b] == mouse) g_mouse[b] = 0;
-    g_key[a] = key;
-    g_mouse[a] = mouse;
+    /* One input, one action: whatever else had it gives it up. A combination keeps its parts,
+     * so a modifier can be part of several of them. */
+    for (int s = 0; s < BIND_SLOTS; ++s) {
+        const BindSlot *mine = &g_slot[a][s];
+        if (mine->n != 1) continue;
+        for (int other = 0; other < BIND_COUNT; ++other) {
+            if (other == a) continue;
+            for (int t = 0; t < BIND_SLOTS; ++t) {
+                BindSlot *theirs = &g_slot[other][t];
+                if (theirs->n == 1 && theirs->in[0] == mine->in[0]) theirs->n = 0;
+            }
+        }
+    }
     return true;
 }
 
@@ -136,17 +209,59 @@ void bb_bindings_load(const char *ini_path) {
     fclose(file);
 }
 
+/* Is one input held? Keys come from SDL's state, mouse inputs from the pad sample's bits. */
+static bool input_held(int input, const bool *keys, int nkeys, uint32_t mouse) {
+    if (input > 0) return keys && input < nkeys && keys[input];
+    if (is_mouse(input)) return ((mouse >> (-input - 1)) & 1u) != 0;
+    return false;
+}
+
+static bool slot_held(const BindSlot *b, const bool *keys, int nkeys, uint32_t mouse) {
+    for (int i = 0; i < b->n; ++i)
+        if (!input_held(b->in[i], keys, nkeys, mouse)) return false;
+    return b->n > 0;
+}
+
 void bb_bindings_apply(const bool *keys, int nkeys, uint32_t mouse, BindOutput *out) {
-    bool held[BIND_COUNT], by_key[BIND_COUNT];
     out->buttons = 0;
     out->mouse_buttons = 0;
     out->touch_side = -1;
     out->lx = out->ly = out->rx = out->ry = -1;
     out->any = false;
+    /* A combination that is held owns its inputs: the plain bindings on them stay quiet while
+     * it is held (Shift + left click is R2 only, not R1 as well). */
+    int consumed[BIND_COUNT * BIND_SLOTS * BIND_COMBO_PARTS];
+    int nconsumed = 0;
+    for (int a = 0; a < BIND_COUNT; ++a)
+        for (int s = 0; s < BIND_SLOTS; ++s) {
+            const BindSlot *b = &g_slot[a][s];
+            if (b->n < 2 || !slot_held(b, keys, nkeys, mouse)) continue;
+            for (int i = 0; i < b->n && nconsumed < (int)(sizeof(consumed) / sizeof(*consumed)); ++i)
+                consumed[nconsumed++] = b->in[i];
+        }
+    bool held[BIND_COUNT], by_key[BIND_COUNT];
     for (int a = 0; a < BIND_COUNT; ++a) {
-        const int k = g_key[a], m = g_mouse[a];
-        by_key[a] = keys && k > 0 && k < nkeys && keys[k];
-        held[a] = by_key[a] || (m && (mouse >> (m - 1)) & 1);
+        held[a] = false;
+        by_key[a] = false;
+        for (int s = 0; s < BIND_SLOTS; ++s) {
+            const BindSlot *b = &g_slot[a][s];
+            if (!slot_held(b, keys, nkeys, mouse)) continue;
+            if (b->n == 1) {
+                bool owned = false;
+                for (int i = 0; i < nconsumed; ++i)
+                    if (consumed[i] == b->in[0]) {
+                        owned = true;
+                        break;
+                    }
+                if (owned) continue;
+            }
+            held[a] = true;
+            bool keyboard_only = true;
+            for (int i = 0; i < b->n; ++i)
+                if (is_mouse(b->in[i])) keyboard_only = false;
+            if (keyboard_only) by_key[a] = true;
+            break;
+        }
     }
     uint32_t key_buttons = 0;
     for (int a = 0; a < BIND_COUNT; ++a) {

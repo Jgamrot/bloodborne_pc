@@ -24,6 +24,69 @@ Item {
     property var current: categories.find(c => c.name === category) || categories[0]
     property real listWidth: width < 1200 ? 262 : 300
 
+    // --- Key bindings: a slot takes the next key or mouse button pressed ---------------------
+    property string capturingAction: ""
+    property int capturingSlot: 0
+    property string capturingLabel: ""
+    property var pendingMods: []
+    property string captureHint: "Press a key or a mouse button"
+
+    function beginCapture(action, slot, label) {
+        capturingAction = action
+        capturingSlot = slot
+        capturingLabel = label
+        pendingMods = []
+        captureHint = "Press a key or a mouse button"
+        Qt.callLater(function() { captureKeys.forceActiveFocus() })
+    }
+    function cancelCapture() {
+        capturingAction = ""
+        pendingMods = []
+    }
+    function modifierName(qtKey) {
+        if (qtKey === Qt.Key_Shift) return "Left Shift"
+        if (qtKey === Qt.Key_Control) return "Left Ctrl"
+        if (qtKey === Qt.Key_Alt) return "Left Alt"
+        return ""
+    }
+    function commitCapture(inputName) {
+        if (inputName === "" || capturingAction === "") return
+        var parts = pendingMods.slice()
+        parts.push(inputName)
+        launcher.setBinding(capturingAction, capturingSlot, parts.join("+"))
+        cancelCapture()
+    }
+    function takeKey(event) {
+        if (event.isAutoRepeat) { event.accepted = true; return }
+        if (event.key === Qt.Key_Escape) {
+            if (pendingMods.length > 0) { pendingMods = []; captureHint = "Press a key or a mouse button" }
+            else cancelCapture()
+            event.accepted = true
+            return
+        }
+        if (event.key === Qt.Key_Backspace && pendingMods.length === 0) {
+            launcher.clearBinding(capturingAction, capturingSlot)
+            cancelCapture()
+            event.accepted = true
+            return
+        }
+        var mod = modifierName(event.key)
+        if (mod !== "") {
+            if (pendingMods.indexOf(mod) < 0 && pendingMods.length < 2) pendingMods = pendingMods.concat([mod])
+            captureHint = pendingMods.join(" + ") + " + …"
+            event.accepted = true
+            return
+        }
+        var numpad = (event.modifiers & Qt.KeypadModifier) !== 0
+        var name = launcher.bindingText(capturingAction, capturingSlot, event.key, numpad)
+        if (name !== "") commitCapture(name)
+        event.accepted = true
+    }
+    function takeMouse(button) {
+        var name = launcher.mouseButtonName(button)
+        if (name !== "") commitCapture(name)
+    }
+
     function openAt(nextCategory, nextSection, nextKey) {
         category = nextCategory || category || "Visuals"
         section = nextSection || launcher.categorySections(category)[0]
@@ -227,6 +290,27 @@ Item {
                     delegate: FieldRow { width: detailColumn.width; field: modelData }
                 }
 
+                // Key bindings: three slots per action, each a key, a mouse button or a
+                // combination; written to bbport.ini as it is captured.
+                Repeater {
+                    model: is("Controls", "Key bindings") ? launcher.bindings : []
+                    delegate: BindRow {
+                        width: detailColumn.width
+                        row: modelData
+                        onCaptureRequested: (action, slot, label) => workspace.beginCapture(action, slot, label)
+                    }
+                }
+                Note {
+                    visible: is("Controls", "Key bindings")
+                    text: "Click a slot and press a key or a mouse button. Hold Shift, Ctrl or Alt first for a combination (Shift + left click is the strong attack). Right-click a slot or press Backspace to clear it, Esc cancels. An action takes up to three bindings; a key belongs to one action, combinations may share a modifier. Changes apply the next time the game starts."
+                }
+                Row {
+                    visible: is("Controls", "Key bindings")
+                    spacing: 10
+                    GlassButton { text: "Reset to defaults"; width: 170; height: 38; onClicked: launcher.resetBindings() }
+                    GlassButton { text: "Open bbport.ini"; width: 150; height: 38; onClicked: launcher.action("openConfig") }
+                }
+
                 // Actions beside the task that calls for them.
                 Column {
                     width: parent.width; spacing: 12; topPadding: 20
@@ -351,6 +435,49 @@ Item {
                         background: Rectangle { color: "#0f1216"; radius: Theme.radius; border.color: Theme.line }
                     }
                 }
+            }
+        }
+    }
+
+    // --- Capture layer: the next key, mouse button or wheel step becomes the slot's binding ----
+    Rectangle {
+        id: captureLayer
+        anchors.fill: parent
+        visible: workspace.capturingAction !== ""
+        color: "#d90b0d10"
+        z: 60
+        MouseArea {
+            anchors.fill: parent
+            acceptedButtons: Qt.AllButtons
+            cursorShape: Qt.CrossCursor
+            onPressed: (mouse) => workspace.takeMouse(mouse.button)
+        }
+        WheelHandler {
+            onWheel: (event) => workspace.commitCapture(event.angleDelta.y > 0 ? "WheelUp" : "WheelDown")
+        }
+        FocusScope {
+            id: captureKeys
+            anchors.fill: parent
+            focus: true
+            Keys.onPressed: (event) => workspace.takeKey(event)
+        }
+        Column {
+            anchors.centerIn: parent
+            spacing: 12
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: workspace.capturingLabel
+                color: Theme.textDim; font.family: Theme.sans; font.pixelSize: 14
+            }
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: workspace.captureHint
+                color: Theme.text; font.family: Theme.serif; font.pixelSize: 22
+            }
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: "Esc cancels · Backspace clears the slot"
+                color: Theme.textFaint; font.family: Theme.sans; font.pixelSize: 12
             }
         }
     }

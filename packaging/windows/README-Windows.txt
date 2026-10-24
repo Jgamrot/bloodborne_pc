@@ -66,14 +66,20 @@ Starting
   (mouse_hide_cursor=1) keeps the pointer hidden for mouse-to-controller tools.
 
 Key bindings (bbport.ini)
-- One line per action, key_<action>=<keys>. A key is named as SDL names it ("W", "Left Alt",
-  "Left Shift", "Left Ctrl", "Space", "Return", "Backspace", "Escape", "Tab", "Up", "F1",
-  "Keypad 4"...). Mouse inputs: Mouse1 (left), Mouse2 (right), Mouse3 (middle), Mouse4,
-  Mouse5 (side buttons), WheelUp, WheelDown. An action takes one key and one mouse input,
-  separated by a comma; "none" unbinds it. A key given to one action is taken from any other.
-  Edit bbport.ini with the launcher and the game closed. Example:
+- One line per action, key_<action>=<binding>, <binding>, <binding>. A key is named as SDL
+  names it ("W", "Left Alt", "Left Shift", "Left Ctrl", "Space", "Return", "Backspace",
+  "Escape", "Tab", "Up", "F1", "Keypad 4"...). Mouse inputs: Mouse1 (left), Mouse2 (right),
+  Mouse3 (middle), Mouse4, Mouse5 (side buttons), WheelUp, WheelDown. An action takes up to
+  three bindings, separated by commas; each is one input, or up to three inputs joined with
+  '+' that must all be held ("Left Shift+Mouse1" is Shift and the left button together).
+  "none" unbinds it. A key given to one action is taken from any other; combinations keep
+  their parts, so one modifier can serve several of them. A held combination wins over the
+  plain bindings on its inputs. Edit bbport.ini with the launcher and the game closed, or on
+  the launcher's Settings > Controls > Key bindings page, which captures the keys for you.
+  Example:
     key_walk=Left Alt
     key_firearm=X, Mouse2
+    key_strong_attack=Left Shift+Mouse1
     key_l3=none
 - Actions and their defaults (the PS4 button each one presses in brackets):
     move_forward W, move_back S, move_left A, move_right D (left stick)
