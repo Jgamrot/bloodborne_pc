@@ -3,8 +3,9 @@
  * function's integer and vector arguments intact, a call-site hook replaces the callee and can
  * call the original, a mid-function hook sees and changes the registers while the flags, the
  * vector registers and the red zone survive it, a skippable site switches both ways, a data cell
- * the image loads rip-relative follows writes after the seal, and all refuse unexpected bytes
- * without changing anything. */
+ * the image loads rip-relative follows writes after the seal, a store of an immediate stores a
+ * cell's value instead (flags and registers kept), and all refuse unexpected bytes without
+ * changing anything. */
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -16,7 +17,31 @@ typedef int64_t (BB_GUEST_ABI *IntFn)(int64_t, int64_t);
 typedef double (BB_GUEST_ABI *VecFn)(double, double);
 
 enum { SUM = 0x100, ADD = 0x200, CALLER = 0x300, MID = 0x400, MID_SITE = MID + 18, STEP = 0x500,
-       LOAD = 0x600, IMAGE = 0x2000 };
+       LOAD = 0x600, STORE = 0x700, STORE_RAX = 0x780, STORE_R12 = 0x800, STORE_BAD = 0x880, IMAGE = 0x2000 };
+/* store() = 7 + 0x100 (the flags of cmp 7, 9 kept) + what mov dword [rbp-0x48], imm32 stored. */
+static const unsigned char store_code[] = {
+    0x55, 0x48, 0x89, 0xe5,                    /* push rbp; mov rbp, rsp */
+    0xb8, 0x07, 0x00, 0x00, 0x00,              /* mov eax, 7 */
+    0x83, 0xf8, 0x09,                          /* cmp eax, 9 */
+    0xc7, 0x45, 0xb8, 0x11, 0x11, 0x11, 0x11,  /* mov dword [rbp-0x48], 0x11111111 (hooked) */
+    0x0f, 0x92, 0xc1, 0x0f, 0xb6, 0xc9,        /* setb cl; movzx ecx, cl */
+    0xc1, 0xe1, 0x08, 0x01, 0xc8,              /* shl ecx, 8; add eax, ecx */
+    0x03, 0x45, 0xb8, 0x5d, 0xc3,              /* add eax, [rbp-0x48]; pop rbp; ret */
+};
+/* store_rax(p) = what mov dword [rax+0x10], imm32 stored, read back through rax. */
+static const unsigned char store_rax_code[] = {
+    0x48, 0x89, 0xf8, 0xc7, 0x40, 0x10, 0x22, 0x22, 0x22, 0x22, 0x8b, 0x40, 0x10, 0xc3,
+};
+/* store_r12(p): the same through [r12+0x18] (REX.B, SIB). */
+static const unsigned char store_r12_code[] = {
+    0x41, 0x54, 0x49, 0x89, 0xfc, 0x41, 0xc7, 0x44, 0x24, 0x18, 0x33, 0x33, 0x33, 0x33,
+    0x41, 0x8b, 0x44, 0x24, 0x18, 0x41, 0x5c, 0xc3,
+};
+/* Refused: mov dword [rsp+8], imm32; mov dword [rip+0], imm32. */
+static const unsigned char store_bad_code[] = {
+    0xc7, 0x44, 0x24, 0x08, 0x44, 0x44, 0x44, 0x44, 0xc7, 0x05, 0, 0, 0, 0, 0x55, 0x55, 0x55, 0x55,
+};
+typedef uint32_t (BB_GUEST_ABI *StoreFn)(void *);
 typedef float (BB_GUEST_ABI *LoadFn)(void);
 /* sum(a, b) = a + 2b: push rbp; mov rbp,rsp; lea rax,[rdi+rsi*2]; pop rbp; ret */
 /* The hook API checks sites by length and hash (code_check.h). */
@@ -90,6 +115,10 @@ int main(void) {
     image[CALLER + 5] = 0xc3;
     memcpy(image + MID, mid_code, sizeof(mid_code));
     memcpy(image + STEP, step_code, sizeof(step_code));
+    memcpy(image + STORE, store_code, sizeof(store_code));
+    memcpy(image + STORE_RAX, store_rax_code, sizeof(store_rax_code));
+    memcpy(image + STORE_R12, store_r12_code, sizeof(store_r12_code));
+    memcpy(image + STORE_BAD, store_bad_code, sizeof(store_bad_code));
 
     assert(bb_hooks_init(image, IMAGE) == 0);
     unsigned char before[IMAGE];
@@ -100,6 +129,11 @@ int main(void) {
     assert(bb_hook_call(SUM, SUM, (void *)replace_sum) == -1);
     assert(bb_hook_mid(MID_SITE, code_of(step_code, 5), on_mid) == -1);
     assert(bb_hook_skip(STEP, code_of(step_code + 5, 5)) == NULL);
+    static uint32_t far_cell;
+    assert(bb_hook_store(STORE + 12, 7, code_of(store_code + 13, 3), &far_cell) == -1);  /* other bytes */
+    assert(bb_hook_store(STORE_BAD, 8, code_of(store_bad_code, 4), &far_cell) == -1);    /* rsp-based */
+    assert(bb_hook_store(STORE_BAD + 8, 10, code_of(store_bad_code + 8, 6), &far_cell) == -1);  /* rip */
+    assert(bb_hook_store(STORE + 4, 5, code_of(store_code + 4, 1), &far_cell) == -1);  /* mov eax, imm32 */
     assert(!memcmp(before, image, IMAGE));  /* refusals change nothing */
 
     /* A guarded data write: only over the expected bytes, nothing changed otherwise. */
@@ -127,6 +161,13 @@ int main(void) {
     const int32_t rel32 = (int32_t)to_cell;
     memcpy(image + LOAD + 4, &rel32, 4);
     image[LOAD + 8] = 0xc3;
+    /* Stores of a cell's value in place of an immediate: rbp-, rax- (another scratch) and r12-based. */
+    uint32_t *stored = bb_hook_data(4), *stored_rax = bb_hook_data(4), *stored_r12 = bb_hook_data(4);
+    assert(stored && stored_rax && stored_r12);
+    assert(bb_hook_store(STORE + 12, 7, code_of(store_code + 12, 3), stored) == 0);
+    assert(bb_hook_store(STORE_RAX + 3, 7, code_of(store_rax_code + 3, 3), stored_rax) == 0);
+    assert(bb_hook_store(STORE_R12 + 5, 9, code_of(store_r12_code + 5, 5), stored_r12) == 0);
+    assert(bb_hook_store(STORE + 12, 7, code_of(store_code + 12, 3), stored) == -1);  /* already hooked */
     assert(!bb_main_frame_available());  /* no frame-time manager in this image */
     bb_hooks_seal();
     DWORD old;
@@ -152,6 +193,15 @@ int main(void) {
     assert(((LoadFn)(image + LOAD))() == 0.25f);
     *(volatile float *)cell = -2.0f;
     assert(((LoadFn)(image + LOAD))() == -2.0f);
+    uint32_t box[8] = {0};
+    *(volatile uint32_t *)stored = 0x2000;
+    assert(((StoreFn)(image + STORE))(NULL) == 7 + 0x100 + 0x2000);
+    *(volatile uint32_t *)stored = 0x3c360b61;
+    assert(((StoreFn)(image + STORE))(NULL) == 7 + 0x100 + 0x3c360b61);
+    *(volatile uint32_t *)stored_rax = 0xabcdef01;
+    assert(((StoreFn)(image + STORE_RAX))(box) == 0xabcdef01 && box[4] == 0xabcdef01);
+    *(volatile uint32_t *)stored_r12 = 0x12345678;
+    assert(((StoreFn)(image + STORE_R12))(box) == 0x12345678 && box[6] == 0x12345678);
     puts("engine hooks: ok");
     return 0;
 }
