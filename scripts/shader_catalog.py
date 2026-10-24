@@ -20,7 +20,7 @@ import sys
 
 # The versions the game writes (gpu/.../vk_pipeline_serialization.cpp): older records are left.
 SHADER_META_VERSION = 8
-PIPELINE_KEY_VERSION = 5
+PIPELINE_KEY_VERSION = 6
 
 
 def current(path):
