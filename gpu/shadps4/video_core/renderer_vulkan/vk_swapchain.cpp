@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <cstdio>
 #include <limits>
 #include "bbport_settings.h"
 #include "common/assert.h"
@@ -52,7 +53,10 @@ void Swapchain::Create(u32 width_, u32 height_) {
     const vk::SharingMode sharing_mode =
         exclusive ? vk::SharingMode::eExclusive : vk::SharingMode::eConcurrent;
     const auto format = needs_hdr ? SURFACE_FORMAT_HDR : surface_format;
+    // bbport: the NVIDIA boost hint is set per swapchain, on one made with low latency allowed.
+    const vk::SwapchainLatencyCreateInfoNV latency_info = {.latencyModeEnable = true};
     const vk::SwapchainCreateInfoKHR swapchain_info = {
+        .pNext = instance.IsLowLatencyBoostEnabled() ? &latency_info : nullptr,
         .surface = surface,
         .minImageCount = image_count,
         .imageFormat = format.format,
@@ -75,9 +79,46 @@ void Swapchain::Create(u32 width_, u32 height_) {
     ASSERT_MSG(swapchain_result == vk::Result::eSuccess, "Failed to create swapchain: {}",
                vk::to_string(swapchain_result));
     swapchain = chain;
+    UpdateLatencyBoost(true);
 
     SetupImages();
     RefreshSemaphores();
+}
+
+void Swapchain::UpdateLatencyBoost(bool new_swapchain) {
+    if (!instance.IsLowLatencyBoostEnabled() ||
+        !VULKAN_HPP_DEFAULT_DISPATCHER.vkSetLatencySleepModeNV) {
+        return;
+    }
+    // Off with DLSS Frame Generation, which Awakenchan's port leaves to Streamline's Reflex.
+    const bool boost = BbSettings::Get().frame_gen.load(std::memory_order_relaxed) !=
+                       BbSettings::FrameGenDlss;
+    if (!new_swapchain && boost == latency_boost) {
+        return;
+    }
+    latency_boost = boost;
+    // bbport (Awakenchan 0.9.37 beta 6): the driver keeps the GPU's clocks up (Reflex Boost)
+    // instead of lowering them while the GPU waits for the engine. No sleeps, no markers.
+    const VkLatencySleepModeInfoNV mode{
+        .sType = VK_STRUCTURE_TYPE_LATENCY_SLEEP_MODE_INFO_NV,
+        .lowLatencyMode = VK_FALSE,
+        .lowLatencyBoost = boost ? VK_TRUE : VK_FALSE,
+        .minimumIntervalUs = 0,
+    };
+    const VkResult result = VULKAN_HPP_DEFAULT_DISPATCHER.vkSetLatencySleepModeNV(
+        instance.GetDevice(), swapchain, &mode);
+    const int state = result != VK_SUCCESS ? 2 : boost ? 1 : 0;
+    static int logged = -1;
+    if (state != logged) {
+        logged = state;
+        if (result != VK_SUCCESS) {
+            std::printf("GPU: NVIDIA boost clocks unavailable (vkSetLatencySleepModeNV: %s)\n",
+                        vk::to_string(vk::Result(result)).c_str());
+        } else {
+            std::printf(boost ? "GPU: NVIDIA boost clocks on (BB_NV_BOOST=0: off)\n"
+                              : "GPU: NVIDIA boost clocks off while DLSS Frame Generation runs\n");
+        }
+    }
 }
 
 void Swapchain::Recreate(u32 width_, u32 height_) {
@@ -132,6 +173,7 @@ bool Swapchain::AcquireNextImage() {
 }
 
 bool Swapchain::Present() {
+    UpdateLatencyBoost(false);
     const vk::PresentInfoKHR present_info = {
         .waitSemaphoreCount = 1,
         .pWaitSemaphores = &present_ready[image_index],
