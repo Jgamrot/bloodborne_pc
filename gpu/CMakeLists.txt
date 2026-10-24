@@ -350,6 +350,11 @@ add_executable(srt-walker-test EXCLUDE_FROM_ALL ../tests/test_srt_walker.cpp)
 target_compile_options(srt-walker-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(srt-walker-test PRIVATE $<TARGET_PROPERTY:bbgpu,INCLUDE_DIRECTORIES>)
 
+add_executable(hot-pages-test EXCLUDE_FROM_ALL ../tests/test_region_manager_hot_pages.cpp)
+target_compile_options(hot-pages-test PRIVATE -UNDEBUG -Wall -Wextra -Werror -Wno-sign-compare)
+target_include_directories(hot-pages-test PRIVATE $<TARGET_PROPERTY:bbgpu,INCLUDE_DIRECTORIES>)
+target_compile_definitions(hot-pages-test PRIVATE $<TARGET_PROPERTY:bbgpu,COMPILE_DEFINITIONS>)
+
 add_executable(motion-history-test EXCLUDE_FROM_ALL ../tests/test_motion_history.cpp)
 target_compile_options(motion-history-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(motion-history-test PRIVATE ..)

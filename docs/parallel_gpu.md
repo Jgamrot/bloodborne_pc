@@ -70,7 +70,9 @@ The GPU command thread is back at ~100%: it is the limit again.
 
 Rejected: "hot pages" (never re-protect pages written repeatedly, upload them on every
 binding) — the set grew to ~14k pages, re-uploads dropped the frame rate to 33 FPS and a GPU
-ring timeout followed. Left opt-in behind BB_HOT_PAGES=1.
+ring timeout followed. Left opt-in behind BB_HOT_PAGES=1. The default is now Awakenchan's
+measured rule (BB_HOT_PAGES=2): hot after 16 faults in 2 s with at most 8 uses per fault, at
+most 2048 hot pages (8 MiB); BB_HOT_PAGES=0 turns hot pages off.
 
 Texture description cache 2-way/4096, same-target fast path, LRU touch skip, no per-texture
 meta lookup: other outdoor view, 93.9 FPS; with the texture memos off (mask 1056) 65.6 FPS.
