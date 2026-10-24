@@ -39,9 +39,11 @@ hidden=()
 for module in argparse base64 bisect collections contextlib hashlib json re shutil struct tempfile               xml.etree.ElementTree urllib.request ctypes.wintypes certifi; do
     hidden+=(--hidden-import "$module")
 done
+# The repository root: run.py is built in for the launcher's missing-files check (START_SCRIPTS).
 "$venv/Scripts/python.exe" -m PyInstaller --noconfirm --clean --log-level WARN --windowed \
     --name Bloodborne --icon "$(cygpath -w "$PWD/launcher/assets/hunter-icon.ico")" --distpath out/pyi-dist \
-    --workpath out/pyi-work --specpath out/pyi-work --paths "$(cygpath -w "$PWD/scripts")" "${hidden[@]}" \
+    --workpath out/pyi-work --specpath out/pyi-work --paths "$(cygpath -w "$PWD/scripts")" \
+    --paths "$(cygpath -w "$PWD")" "${hidden[@]}" \
     "$(cygpath -w "$PWD/launcher/bbport_launcher_win.py")"
 # Qt Quick needs the VC runtime shipped with the PySide6 wheel. PyInstaller can pick an older
 # root copy from Windows Python. It can also collect an unrelated ICU from the build host's PATH;

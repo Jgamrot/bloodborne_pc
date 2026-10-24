@@ -35,6 +35,7 @@ import zipfile
 FROZEN = getattr(sys, 'frozen', False)
 PORT_DIR = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PORT_DIR / 'scripts'))
+sys.path.append(str(PORT_DIR))  # run.py's START_SCRIPTS; frozen, the copy built into the launcher wins
 DATA_DIR = Path(os.environ.get('BB_DATA_DIR', PORT_DIR))
 # Co-op test build: its own settings, and no updates (a public release would replace it).
 COOP_TEST = False
@@ -54,6 +55,7 @@ COMMUNITY_SERVER = 'https://thehuntersdream.com'
 COMMUNITY_API_PORT = 18671
 RELEASES_API = 'https://api.github.com/repos/Jgamrot/bloodborne_pc/releases/latest'
 RELEASES_PAGE = 'https://github.com/Jgamrot/bloodborne_pc/releases/latest'
+RELEASES_LIST_API = 'https://api.github.com/repos/Jgamrot/bloodborne_pc/releases?per_page=100'
 UPDATE_DIR = Path(tempfile.gettempdir()) / 'bbport-update'
 # The last answer from GitHub, so a direct launch (no launcher window) can check quietly and the
 # launcher shows the result the next time it opens. Off with check_updates like every check.
@@ -62,6 +64,8 @@ QUIET_CHECK_DELAY = 20  # seconds after a direct launch starts the game
 QUIET_CHECK_INTERVAL = 6 * 3600  # at most this often from direct launches
 # Never copied over an installation by an update (the package does not hold them either).
 USER_FILES = ('user', 'out', 'mods', 'bbport.ini', 'mods.json', 'patches.json', 'last_run.log')
+# The running launcher: in use, and already this version. A repair leaves them alone.
+LAUNCHER_FILES = ('Bloodborne.exe', '_internal')
 
 
 # ---------------------------------------------------------------------------------------------
@@ -861,7 +865,7 @@ class Launcher:
         self.ini, self.ini_lines = load_ini()
         self.vars = {}
         self.process = self.job = None
-        self.downloading = False
+        self.downloading = self.repairing = False
         self.output = queue.Queue()
         self.gpu_text = _('• Checking the graphics card…', '• Проверка видеокарты…')
         self.banner_source = self.banner_image = None
@@ -900,6 +904,8 @@ class Launcher:
             if remembered := remembered_update():  # found by a direct launch's quiet check
                 self.offer_update(*remembered)
             threading.Thread(target=self.check_update, daemon=True).start()
+        if missing := missing_port_files():
+            root.after(300, lambda: self.offer_repair(missing))
 
     def px(self, size):
         return int(size * self.dpi)
@@ -2208,7 +2214,7 @@ class Launcher:
 
     # ---- game process ------------------------------------------------------------------------
     def play(self):
-        if self.process:
+        if self.process or self.repairing:
             return
         online, npid = self.var('online', 'app'), self.var('online_npid', 'app')
         if not online.get() and npid.get().strip():
@@ -2235,6 +2241,9 @@ class Launcher:
             self.messagebox.showerror('Bloodborne', _('Choose the game folder with eboot.bin (CUSA03173).',
                                                       'Выберите папку игры с eboot.bin (CUSA03173).'))
             self.show('game')
+            return
+        if missing := missing_port_files():
+            self.offer_repair(missing)
             return
         self.set_log('')
         try:
@@ -2292,6 +2301,8 @@ class Launcher:
                     self.sync_ini()  # the in-game menu's changes, shown at once
                     self.stop_button.configure(state='disabled')
                     self.refresh_status()
+                    if item[0] and (missing := missing_port_files()):
+                        self.offer_repair(missing)
                 else:
                     if 'Entering original x86-64 code' in item:
                         self.status.configure(text=_('The game is running.', 'Игра запущена.'), fg=GOLD)
@@ -2429,6 +2440,72 @@ class Launcher:
                     self.messagebox.showerror('Bloodborne', _('Update failed: {}', 'Не удалось обновить: {}').format(error))
                 self.ui_calls.put(failed)
         threading.Thread(target=work, daemon=True).start()
+
+    # ---- repair --------------------------------------------------------------------------------
+    def offer_repair(self, missing):
+        """A port folder without some of its files (#171): offers to put this version's back."""
+        if self.repairing:
+            return
+        if not FROZEN or COOP_TEST:
+            self.repair_failed(missing)
+            return
+        more = _(' and {} more', ' и ещё {}').format(len(missing) - 1) if len(missing) > 1 else ''
+        if self.messagebox.askyesno('Bloodborne', _(
+                'This copy of the port is incomplete: {} missing.\n\nRepair it? The launcher downloads version {} '
+                'from GitHub and puts its files back. Saves, settings and mods are kept.',
+                'Эта копия порта неполная: нет {}.\n\nВосстановить? Лаунчер скачает версию {} с GitHub и вернёт '
+                'её файлы. Сохранения, настройки и моды останутся.').format(missing[0] + more, VERSION)):
+            self.repair()
+
+    def repair(self):
+        if self.process:
+            self.messagebox.showinfo('Bloodborne', _('Close the game before repairing.', 'Закройте игру перед восстановлением.'))
+            return
+        self.repairing = True
+
+        def progress(percent):
+            self.status.configure(text=_('Downloading version {}… {}%', 'Загрузка версии {}… {}%').format(
+                VERSION, percent), fg=GOLD)
+
+        def work():
+            try:
+                missing, failed = repair_port(lambda percent: self.ui_calls.put(lambda: progress(percent)))
+            except OSError as failure:
+                self.ui_calls.put(lambda error=failure: self.repair_done(missing_port_files(), [], error))
+            else:
+                self.ui_calls.put(lambda: self.repair_done(missing, failed))
+        threading.Thread(target=work, daemon=True).start()
+
+    def repair_done(self, missing, failed, error=None):
+        self.repairing = False
+        self.status.configure(text='', fg=MUTED)
+        if error or missing:
+            self.repair_failed(missing, error)
+        elif failed:
+            self.messagebox.showwarning('Bloodborne', _(
+                'The port is repaired, but some files were in use and were not replaced: {}. Close the '
+                'programs using them and repair again if the game does not start.',
+                'Порт восстановлен, но некоторые файлы были заняты и не заменены: {}. Закройте программы, '
+                'которые их используют, и повторите, если игра не запускается.').format(
+                    ', '.join(map(str, failed[:3]))))
+        else:
+            self.messagebox.showinfo('Bloodborne', _('The port is repaired: the files of version {} are back.',
+                                                     'Порт восстановлен: файлы версии {} на месте.').format(VERSION))
+
+    def repair_failed(self, missing, error=None):
+        """What run.py says about an incomplete copy, with the releases page opened."""
+        text = ''
+        if missing:
+            more = _(' and {} more', ' и ещё {}').format(len(missing) - 1) if len(missing) > 1 else ''
+            text = _('This copy of the port is incomplete: {} missing from {}. Download the port again from {} '
+                     'and unpack the whole zip; copies from other sites often leave files out.',
+                     'Эта копия порта неполная: в {1} нет {0}. Скачайте порт заново с {2} и распакуйте весь '
+                     'архив; в копиях с других сайтов часто не хватает файлов.').format(
+                         missing[0] + more, PORT_DIR, RELEASES_PAGE)
+        if error:
+            text = (_('Repair failed: {}', 'Не удалось восстановить: {}').format(error) + '\n\n' + text).strip()
+        self.messagebox.showerror('Bloodborne', text)
+        webbrowser.open(RELEASES_PAGE)
 
     def clear_cache(self):
         """Shader and pipeline caches; they are rebuilt while playing."""
@@ -2721,6 +2798,100 @@ def install_update(target, wait_pid):
     return 0
 
 
+def missing_port_files(port=None):
+    """run.py and the scripts it needs that the port folder lacks, by run.py's START_SCRIPTS
+    (frozen: this launcher's own copy of run.py, so this version's list)."""
+    port = Path(port or PORT_DIR)
+    missing = [] if (port / 'run.py').is_file() else ['run.py']
+    try:
+        import run
+        return missing + run.missing_port_files(port)
+    except (ImportError, AttributeError):  # no run.py to read the list from, or an old one
+        return missing or ['run.py']
+
+
+def own_release(releases, version=None, tag=None):
+    """(zip URL, page URL) of this launcher's release in a GitHub releases list: the one tagged
+    CURRENT_RELEASE_TAG, else the one named "Bloodborne Windows Launcher <VERSION> (...)"."""
+    version, tag = version or VERSION, tag or CURRENT_RELEASE_TAG
+
+    def zip_url(release):
+        assets = [asset for asset in release.get('assets') or []
+                  if str(asset.get('name', '')).lower().endswith('.zip')]
+        assets.sort(key=lambda asset: asset.get('name') != 'bbport-windows.zip')
+        return next((asset['browser_download_url'] for asset in assets if asset.get('browser_download_url')), None)
+
+    def named(release):
+        match = re.match(r'Bloodborne Windows Launcher (\S+)', release.get('name') or '')
+        return bool(match) and match.group(1) == version
+
+    for wanted in (lambda release: release.get('tag_name') == tag, named):
+        for release in releases:
+            if isinstance(release, dict) and not release.get('draft') and wanted(release):
+                if url := zip_url(release):
+                    return url, release.get('html_url') or RELEASES_PAGE
+    return None
+
+
+def download(url, path, progress=None):
+    """A release zip to path; progress(percent) each time the percentage changes."""
+    request = urllib.request.Request(url, headers={'User-Agent': 'bbport-launcher'})
+    with urllib.request.urlopen(request, timeout=60) as response, open(path, 'wb') as out:
+        total, done, shown = int(response.headers.get('Content-Length') or 0), 0, -1
+        while chunk := response.read(1 << 20):
+            out.write(chunk)
+            done += len(chunk)
+            percent = done * 100 // total if total else 0
+            if progress and percent != shown:
+                shown = percent
+                progress(percent)
+
+
+def repair_copy(source, target):
+    """Every file of the release in source over target but USER_FILES and LAUNCHER_FILES.
+    Returns the files not copied (in use)."""
+    source = Path(source)
+    files = [path.relative_to(source) for path in sorted(source.rglob('*'))
+             if path.is_file() and path.relative_to(source).parts[0] not in USER_FILES + LAUNCHER_FILES]
+    return copy_release(source, target, files)
+
+
+def repair_port(progress=None, target=None):
+    """Downloads this version's release and copies it over the port folder (repair_copy), so a
+    folder with files missing or left from another version matches this launcher again.
+    Returns (files still missing, files not copied); raises OSError when it cannot."""
+    target = Path(target or PORT_DIR)
+    if not FROZEN or COOP_TEST:
+        raise OSError('only a packaged launcher repairs itself')
+    request = urllib.request.Request(RELEASES_LIST_API, headers={'Accept': 'application/vnd.github+json',
+                                                                 'User-Agent': 'bbport-launcher'})
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            releases = json.load(response)
+    except ValueError as error:
+        raise OSError(f'unexpected answer from GitHub: {error}') from error
+    found = own_release(releases if isinstance(releases, list) else [])
+    if not found:
+        raise OSError(f'version {VERSION} was not found on GitHub')
+    if not remove_update_folder():
+        raise OSError('an update is still being installed; try again in a minute')
+    try:
+        UPDATE_DIR.mkdir(parents=True, exist_ok=True)
+        archive = UPDATE_DIR / 'repair.zip'
+        download(found[0], archive, progress)
+        try:
+            extract_update(archive, UPDATE_DIR / 'new')
+        except zipfile.BadZipFile as error:
+            raise OSError(f'the download is damaged: {error}') from error
+        source = next((p.parent for p in (UPDATE_DIR / 'new').rglob('Bloodborne.exe')), None)
+        if not source:
+            raise OSError('Bloodborne.exe is missing from the download')
+        failed = repair_copy(source, target)
+    finally:
+        remove_update_folder()
+    return missing_port_files(target), failed
+
+
 def main():
     global LANG
     args = sys.argv[1:]
@@ -2741,8 +2912,10 @@ def main():
         sys.exit(install_update(args[1], args[2]))
     if FROZEN and UPDATE_DIR not in PORT_DIR.parents:
         remove_update_folder()  # what a finished update left behind
-    # Without a usable game folder there is nothing to play yet: open the launcher instead.
-    if '--play' in args and (Path(settings['game_dir'] or '.') / 'eboot.bin').is_file():
+    # Without a usable game folder there is nothing to play yet, and an incomplete port folder
+    # needs Repair: open the launcher instead.
+    if ('--play' in args and (Path(settings['game_dir'] or '.') / 'eboot.bin').is_file()
+            and not missing_port_files()):
         sys.exit(play_without_window(settings))
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(1)  # sharp text on scaled displays
