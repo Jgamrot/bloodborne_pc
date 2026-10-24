@@ -283,6 +283,74 @@ def start_companions(data, env, game_pid):
     return started
 
 
+# Hybrid graphics: a machine with an integrated GPU beside a discrete one enumerates both,
+# and the integrated card is normally device 0 - the index bb-probe uses when BB_GPU_ID is
+# unset. The port needs Vulkan 1.3 and robustBufferAccess2, which an older integrated driver
+# does not offer, and on a laptop the panel is often wired to the integrated GPU as well:
+# the window is created, no frame is ever presented, and the game sits on a black screen.
+GPU_DEVICES_TRIED = 4
+
+
+def caps_vram(caps, env, index):
+    """(MiB, discrete) for one Vulkan device index, 'end' past the last device, else None."""
+    try:
+        result = subprocess.run([str(caps), '--vram'], stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                                timeout=20, env={**env, 'BB_GPU_ID': str(index)},
+                                creationflags=no_console())
+        text = result.stdout.strip()
+        if 'outside the device list' in text:
+            return 'end'
+        size, kind = text.split()
+        return int(size), kind == '1'
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def caps_gpu_line(caps, env, index):
+    """The probe's "GPU: <name>, <discrete|integrated>, <MiB> MiB: ..." line, else ''."""
+    try:
+        result = subprocess.run([str(caps)], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, text=True, timeout=20,
+                                env={**env, 'BB_GPU_ID': str(index)}, creationflags=no_console())
+    except (OSError, subprocess.SubprocessError):
+        return ''
+    lines = result.stdout.strip().splitlines()
+    return lines[0] if lines else ''
+
+
+def select_discrete_gpu(env, caps):
+    """Point BB_GPU_ID at the discrete card when the machine has more than one GPU.
+
+    bb-gpu-capabilities reports "MiB discrete" for a device index, so the indices are asked
+    one at a time: device 0 is checked first, and only when it is the integrated card are the
+    others scanned for a discrete one (the largest wins). A BB_GPU_ID set by hand, or a
+    machine the probe cannot read, is left alone - the port then keeps its own choice.
+    """
+    if not caps.is_file():
+        return
+    # AMD's switchable-graphics Vulkan layer hides the discrete card on some hybrids.
+    env.setdefault('DISABLE_LAYER_AMD_SWITCHABLE_GRAPHICS_1', '1')
+    if env.get('BB_GPU_ID', '') != '':
+        return
+    first = caps_vram(caps, env, 0)
+    if not isinstance(first, tuple) or first[1]:
+        return  # no answer, or device 0 is already the discrete card
+    best = None
+    for index in range(1, GPU_DEVICES_TRIED):
+        found = caps_vram(caps, env, index)
+        if found == 'end':
+            break
+        if isinstance(found, tuple) and found[1] and (best is None or found[0] > best[1]):
+            best = (index, found[0])
+    if best is None:
+        return  # a single integrated GPU: the port's own choice stands
+    env['BB_GPU_ID'] = str(best[0])
+    line = caps_gpu_line(caps, env, best[0])
+    print(f'GPU: device 0 is integrated, using Vulkan device {best[0]} (BB_GPU_ID={best[0]})'
+          + (f'; {line}' if line else ''))
+
+
 def main():
     args = sys.argv[1:]
     if len(args) >= 2 and args[0] == '--after':
@@ -309,6 +377,9 @@ def main():
         clang64 = Path(env.get('MSYS2_ROOT', r'C:\msys64')) / 'clang64' / 'bin'
         if clang64.is_dir():
             env['PATH'] = f'{clang64}{os.pathsep}{env.get("PATH", "")}'
+
+    # Hybrid graphics (an integrated GPU beside a discrete one): see select_discrete_gpu.
+    select_discrete_gpu(env, probe.parent / 'bb-gpu-capabilities.exe')
 
     game = Path(env.get('BB_GAME_DIR', PORT.parent / 'CUSA03173'))
     if not (game / 'eboot.bin').is_file():
