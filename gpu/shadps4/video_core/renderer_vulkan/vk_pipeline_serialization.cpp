@@ -142,7 +142,11 @@ bool LoadShaderMeta(Serialization::Archive& ar, Shader::Info& info,
         *spirv_current = false;
     }
 
-    fetch_shader_data = spec.fetch_shader_data;
+    // bbport: only a stage with a fetch shader sets it: a geometry stage, loaded after the vertex
+    // stage, left the pipeline without one.
+    if (spec.fetch_shader_data) {
+        fetch_shader_data = spec.fetch_shader_data;
+    }
     return true;
 }
 
@@ -227,6 +231,7 @@ void GraphicsPipeline::SerializationSupport::Serialize(Serialization::Archive& a
     sdata.Write(multisampling);
     sdata.Write(tcs);
     sdata.Write(tes);
+    sdata.Write(u8(clip_distances.value_or(false)));
 }
 
 bool GraphicsPipeline::SerializationSupport::Deserialize(Serialization::Archive& ar) {
@@ -238,6 +243,11 @@ bool GraphicsPipeline::SerializationSupport::Deserialize(Serialization::Archive&
     sdata.Read(multisampling);
     sdata.Read(tcs);
     sdata.Read(tes);
+    if (!ar.IsEoS()) { // pipelines saved before it have none
+        u8 clip{};
+        sdata.Read(clip);
+        clip_distances = clip != 0;
+    }
     return true;
 }
 
@@ -264,6 +274,18 @@ bool PipelineCache::LoadGraphicsPipeline(Serialization::Archive& ar) {
 
     GraphicsPipeline::SerializationSupport sdata{};
     sdata.Deserialize(ar);
+
+    // bbport: without a pixel shader, clip distance emulation's discard shader follows the
+    // draw's registers as saved; a pipeline saved without them is compiled when first drawn.
+    if (!sel.graphics_key.stage_hashes[u32(Shader::SwStage::Fragment)]) {
+        if (!sdata.clip_distances && profile.needs_clip_distance_emulation) {
+            return false;
+        }
+        auto& fs = sel.runtime_infos[u32(Shader::SwStage::Fragment)];
+        fs.Initialize(Shader::HwStage::Fragment, Shader::SwStage::Fragment);
+        fs.hw.fs.clip_distance_emulation =
+            sdata.clip_distances.value_or(false) && profile.needs_clip_distance_emulation;
+    }
 
     for (int stage_idx = 0; stage_idx < MaxShaderStages; ++stage_idx) {
         const auto& hash = sel.graphics_key.stage_hashes[stage_idx];
@@ -404,6 +426,7 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage) 
         }
     }
     spec.info = &it_pgm.value()->info;
+    sel.runtime_infos[stage] = spec.runtime_info;
     it_pgm.value()->InsertPermut(module, std::move(spec), perm_idx);
 
     sel.infos[stage] = &it_pgm.value()->info;

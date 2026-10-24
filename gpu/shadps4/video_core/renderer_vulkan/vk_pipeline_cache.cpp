@@ -96,6 +96,20 @@ static u32 MapOutputs(std::span<Shader::OutputMap, 3> outputs, const AmdGpu::VsO
     return num_outputs;
 }
 
+/// bbport: the draw asks for clip distances (emulated in the fragment stage where the profile
+/// needs it); independent of the GPU, so pipelines without a pixel shader save it.
+static bool ClipDistancesInRegs(const AmdGpu::Regs& regs) {
+    // Lowered user clip planes ride the same emulation path as guest-exported distances, so
+    // the fragment side arms whenever the hardware vertex stage lowers them, keeping its input
+    // locations in sync with the shifted vertex outputs.
+    const bool lowers_user_clip_planes =
+        regs.clipper_control.user_clip_plane_enable &&
+        !regs.stage_enable.IsStageEnabled(static_cast<u32>(HwStage::Geometry));
+    return (regs.vs_output_control.clip_distance_enable &&
+            !regs.stage_enable.IsStageEnabled(static_cast<u32>(HwStage::Local))) ||
+           lowers_user_clip_planes;
+}
+
 const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(PipelineSelection& sel, HwStage stage,
                                                              SwStage l_stage) {
     auto& info = sel.runtime_infos[u32(l_stage)];
@@ -217,17 +231,8 @@ const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(PipelineSelection& se
         for (u32 i = 0; i < Shader::MaxColorBuffers; i++) {
             info.hw.fs.color_buffers[i] = sel.graphics_key.color_buffers[i];
         }
-        // Lowered user clip planes ride the same emulation path as guest-exported distances, so
-        // the fragment side arms whenever the hardware vertex stage lowers them, keeping its input
-        // locations in sync with the shifted vertex outputs.
-        const bool lowers_user_clip_planes =
-            regs.clipper_control.user_clip_plane_enable &&
-            !regs.stage_enable.IsStageEnabled(static_cast<u32>(HwStage::Geometry));
         info.hw.fs.clip_distance_emulation =
-            ((regs.vs_output_control.clip_distance_enable &&
-              !regs.stage_enable.IsStageEnabled(static_cast<u32>(HwStage::Local))) ||
-             lowers_user_clip_planes) &&
-            profile.needs_clip_distance_emulation;
+            ClipDistancesInRegs(regs) && profile.needs_clip_distance_emulation;
         break;
     }
     case HwStage::Compute: {
@@ -465,6 +470,7 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
         CompileTimer timer;
 
         GraphicsPipeline::SerializationSupport sdata{};
+        sdata.clip_distances = ClipDistancesInRegs(*sel.regs);
         it.value() = std::make_unique<GraphicsPipeline>(
             instance, scheduler, desc_heap, profile, sel.graphics_key, *pipeline_cache, sel.infos,
             sel.runtime_infos, sel.fetch_shader, sel.modules, sdata, false);
@@ -757,7 +763,14 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
     sel.infos.fill(nullptr);
     sel.modules.fill(nullptr);
 
-    bind_stage(HwStage::Fragment, SwStage::Fragment);
+    if (!bind_stage(HwStage::Fragment, SwStage::Fragment)) {
+        // bbport: no pixel shader: the fragment state (clip distance emulation's discard shader,
+        // sample shading) comes from this draw's registers, not from the previous draw's stage.
+        auto& fs = sel.runtime_infos[static_cast<u32>(SwStage::Fragment)];
+        fs.Initialize(HwStage::Fragment, SwStage::Fragment);
+        fs.hw.fs.clip_distance_emulation =
+            ClipDistancesInRegs(regs) && profile.needs_clip_distance_emulation;
+    }
 
     const auto* fs_info = sel.infos[static_cast<u32>(SwStage::Fragment)];
     key.mrt_mask = fs_info ? fs_info->mrt_mask : 0u;
