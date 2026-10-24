@@ -223,6 +223,7 @@ page take precedence:
 | Xbox pads: Back + d-pad left/right for the touchpad halves | | `BB_PAD_BACK_COMBO=0` |
 | Skip draws that cannot change anything | | `BB_SKIP_EMPTY_DRAWS=0` |
 | All engine hooks (in-game menus and features) | | `BB_ENGINE_HOOKS=0` |
+| Hot pages: memory the game rewrites before almost every use stays writable and is uploaded on each use (at most 8 MiB) | | `BB_HOT_PAGES=0` off, `=1` the older rule (no size limit) |
 
 ## Known issues
 
