@@ -4,6 +4,7 @@
 #pragma once
 
 #include <array>
+#include <cstring>
 #include <optional>
 #include <vector>
 #include "common/types.h"
@@ -68,6 +69,9 @@ struct FetchShaderData {
                instance_offset_sgpr == other.instance_offset_sgpr;
     }
 
+    /// bbport: every attribute's V# still reads as in `sharps`, a copy taken earlier.
+    bool SharpsUnchanged(const Shader::Info& info, const AmdGpu::Buffer* sharps) const noexcept;
+
     void Serialize(Serialization::Archive& ar) const;
     bool Deserialize(Serialization::Archive& buffer);
 };
@@ -90,6 +94,17 @@ inline AmdGpu::Buffer VertexAttribute::ReadRawSharp(const Shader::Info& info) co
         return *(*offline_attrib_sharps)[semantic];
     }
     return info.ReadUdReg<AmdGpu::Buffer>(sgpr_base, dword_offset);
+}
+
+inline bool FetchShaderData::SharpsUnchanged(const Shader::Info& info,
+                                             const AmdGpu::Buffer* sharps) const noexcept {
+    for (size_t i = 0; i < attributes.size(); ++i) {
+        const auto now = attributes[i].GetSharp(info);
+        if (std::memcmp(&now, &sharps[i], sizeof(now)) != 0) {
+            return false;
+        }
+    }
+    return true;
 }
 
 } // namespace Shader::Gcn
