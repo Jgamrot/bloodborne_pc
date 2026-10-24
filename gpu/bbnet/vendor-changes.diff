@@ -1,19 +1,21 @@
 diff --git a/a/core/libraries/network/http.cpp b/b/core/libraries/network/http.cpp
-index a78e1eb..db1a8e8 100644
+index a78e1eb..d83b90f 100644
 --- a/a/core/libraries/network/http.cpp
 +++ b/b/core/libraries/network/http.cpp
-@@ -365,6 +365,10 @@ static const HostOverrideState& GetHostOverrideState() {
+@@ -365,6 +365,12 @@ static const HostOverrideState& GetHostOverrideState() {
      return s;
  }
  
 +// bbport: The Hunter's Dream backend (gpu/bbnet/thd).
 +extern "C" bool bbthd_enabled();
 +extern "C" void bbthd_add_game_headers(std::vector<std::pair<std::string, std::string>>* headers);
++extern "C" bool bbthd_blocks(const char* host);
++extern "C" void bbthd_http_answer(const char* host, int status, const char* body, std::size_t size);
 +
  bool ApplyHostOverride(std::string& scheme, std::string& host, u16& port, bool& is_secure) {
      const auto& state = GetHostOverrideState();
      if (state.entries.empty()) {
-@@ -385,6 +389,17 @@ bool ApplyHostOverride(std::string& scheme, std::string& host, u16& port, bool&
+@@ -385,6 +391,17 @@ bool ApplyHostOverride(std::string& scheme, std::string& host, u16& port, bool&
      if (it == state.entries.end()) {
          it = state.entries.find(host);
      }
@@ -31,7 +33,10 @@ index a78e1eb..db1a8e8 100644
      if (it == state.entries.end()) {
          it = state.entries.find("*");
      }
-@@ -440,7 +455,12 @@
+@@ -437,8 +454,13 @@ struct SendRequestPlan {
+     int ctx_id = 0;
+ };
+ 
 -// Extract the path-and-query portion from a full URL
 +// Extract the path-and-query portion from a full URL or an origin-form target.
  static std::string ExtractPathFromUrl(const std::string& url) {
@@ -43,9 +48,7 @@ index a78e1eb..db1a8e8 100644
      auto scheme_end = url.find("://");
      if (scheme_end == std::string::npos) {
          return "/";
-     }
-     auto authority_start = scheme_end + 3;
-@@ -1509,7 +1529,10 @@ int PS4_SYSV_ABI sceHttpCreateRequestWithURL(int connId, s32 method, const char* url,
+@@ -1509,7 +1531,10 @@ int PS4_SYSV_ABI sceHttpCreateRequestWithURL(int connId, s32 method, const char*
      auto req = std::make_shared<HttpRequest>();
      req->conn_id = connId;
      req->method = method;
@@ -57,7 +60,7 @@ index a78e1eb..db1a8e8 100644
      req->content_length = contentLength;
      req->settings = conn_it->second.settings;
      req->epoll_id = conn_it->second.epoll_id;
-@@ -1745,6 +1763,10 @@ int PS4_SYSV_ABI sceHttpSendRequest(int reqId, const void* postData, u64 size) {
+@@ -1745,6 +1770,10 @@ int PS4_SYSV_ABI sceHttpSendRequest(int reqId, const void* postData, u64 size) {
                                                          ? tmpl_user_agent
                                                          : BuildLibhttpUserAgent(""));
          }
@@ -68,6 +71,29 @@ index a78e1eb..db1a8e8 100644
          // Pull Content-Type out of headers
          for (const auto& [k, v] : plan.headers) {
              if (HeaderNameMatches(k, "Content-Type")) {
+@@ -1758,7 +1787,9 @@ int PS4_SYSV_ABI sceHttpSendRequest(int reqId, const void* postData, u64 size) {
+         }
+     }
+ 
+-    const bool online = EmulatorSettings.IsConnectedToNetwork();
++    // bbport: after The Hunter's Dream refused this build, its requests fail as with no network.
++    const bool online = EmulatorSettings.IsConnectedToNetwork() &&
++                        !(bbthd_enabled() && bbthd_blocks(plan.host.c_str()));
+     LOG_INFO(Lib_Http, "reqId={} dispatched to async worker [{} {} {}://{}:{}{}]", reqId,
+              online ? "ONLINE" : "OFFLINE", HttpMethodName(plan.method), plan.scheme, plan.host,
+              plan.port, plan.path);
+@@ -1773,6 +1804,11 @@ int PS4_SYSV_ABI sceHttpSendRequest(int reqId, const void* postData, u64 size) {
+             worker_errno = ORBIS_HTTP_ERROR_RESOLVER_ENODNS;
+         } else {
+             worker_errno = RunRealHttpRequest(plan, local_res, success_event_bits);
++            if (worker_errno == 0 && bbthd_enabled()) {
++                bbthd_http_answer(plan.host.c_str(), local_res.status_code,
++                                  reinterpret_cast<const char*>(local_res.body.data()),
++                                  local_res.body.size());
++            }
+         }
+ 
+         std::lock_guard<std::mutex> lock(g_state.m_mutex);
 diff --git a/a/core/libraries/np/np_manager.cpp b/b/core/libraries/np/np_manager.cpp
 index 4591814..0759787 100644
 --- a/a/core/libraries/np/np_manager.cpp

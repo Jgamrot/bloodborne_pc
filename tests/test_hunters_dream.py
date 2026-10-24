@@ -30,6 +30,13 @@ class HuntersDreamTests(unittest.TestCase):
         patcher = mock.patch.object(launcher, 'HUNTERS_DREAM_POOL', True)
         patcher.start()
         self.addCleanup(patcher.stop)
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.refusal = Path(temp.name) / 'thd-refusal.json'
+        for name, value in {'CONFIG_DIR': Path(temp.name), 'THD_REFUSAL': self.refusal}.items():
+            patcher = mock.patch.object(launcher, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
         self.settings = {**launcher.APP_DEFAULTS, 'game_dir': 'x', 'online': True,
                          'online_pool': 'huntersdream', 'thd_online_id': 'Hunter1', 'thd_token': 'tok',
                          'online_npid': 'shadnet_name', 'online_password': 'secret'}
@@ -109,6 +116,8 @@ class HuntersDreamTests(unittest.TestCase):
         self.assertEqual(request.get_header('User-agent'), f'bbport-jgamrot/{launcher.VERSION}')
         self.assertIn('refused by the server (This client is not supported)', line)
         self.assertIn('signing in again does not help', line)
+        self.assertTrue(launcher.thd_refused())  # remembered: no more checks from this version
+        self.refusal.unlink()
         # Any other refusal is the account's: signing in again is the way out.
         expired = urllib.error.HTTPError('https://thehuntersdream.com:18671/np/events/poll', 401,
                                          'Unauthorized', {}, io.BytesIO(json.dumps(
@@ -117,6 +126,7 @@ class HuntersDreamTests(unittest.TestCase):
             line = launcher.thd_account_check('https://thehuntersdream.com', 'Hunter1', 'tok')
         self.assertIn('refused by the server', line)
         self.assertNotIn('does not help', line)
+        self.assertFalse(launcher.thd_refused())
         # A broken reply is reported, not left to end the check's thread.
         import http.client
         with mock.patch.object(launcher.urllib.request, 'urlopen',
@@ -145,6 +155,46 @@ class HuntersDreamTests(unittest.TestCase):
             self.assertIn('not from The Hunter', launcher.thd_account_check('https://thehuntersdream.com',
                                                                             'Hunter1', 'tok'))
         self.assertIn('Not signed in', launcher.thd_account_check('https://thehuntersdream.com', '', ''))
+
+    def test_refused_build_stays_off_the_hunters_dream(self):
+        # The game's line when the server refuses this build ("client is not supported").
+        source = (ROOT / 'gpu/bbnet/thd/thd_session.cpp').read_text(encoding='utf-8')
+        self.assertIn('Log("' + launcher.THD_REFUSED_LINE.removeprefix('THD: '), source)
+        line = (f"THD: the server refused this client (bbport-jgamrot/{launcher.VERSION}) for Hunter1 "
+                "(This client is not supported on The Hunter's Dream): all traffic to The Hunter's Dream "
+                "is stopped for this session; offline play and seamless co-op still work\n")
+        self.assertFalse(launcher.note_game_output('THD: np: event #3 guest_invite\n'))
+        self.assertFalse(launcher.thd_refused())
+        self.assertTrue(launcher.note_game_output(line))
+        self.assertTrue(launcher.thd_refused())
+        self.assertEqual(json.loads(self.refusal.read_text(encoding='utf-8'))['client'], launcher.CLIENT_VERSION)
+        # PLAY in The Hunter's Dream mode starts offline: no backend, no account, no online switch.
+        for settings in (self.settings, {**self.settings, 'play_mode': 'huntersdream'}):
+            env = launcher.game_environment(settings)
+            for key in run.THD_ENV + ('BB_ONLINE', 'BB_SHADNET_SERVER', 'BB_COMMUNITY_SERVER'):
+                self.assertNotIn(key, env)
+        # No sign-in and no account check: nothing is sent to the server.
+        with mock.patch.object(launcher, 'thd_call') as call, \
+                mock.patch.object(launcher.urllib.request, 'urlopen') as urlopen:
+            with self.assertRaises(ValueError) as refused:
+                launcher.thd_sign_in('thehuntersdream.com', lambda page, code: None)
+            self.assertIn("doesn't accept this build", str(refused.exception))
+            note = launcher.thd_account_check('https://thehuntersdream.com', 'Hunter1', 'tok')
+        call.assert_not_called()
+        urlopen.assert_not_called()
+        self.assertIn('offline play and seamless co-op still work', note)
+        # Seamless co-op is untouched by it.
+        with tempfile.TemporaryDirectory() as temp, mock.patch.dict(os.environ, {'LOCALAPPDATA': temp}):
+            env = coop.co_op_environment(launcher.game_environment({**self.settings, 'play_mode': 'coop'}),
+                                         '100.65.141.9', 'hunter', 'secret',
+                                         Path(temp) / 'bbport-windows' / 'bin' / 'bb-probe.exe')
+        self.assertEqual((env['BB_COOP'], env['BB_ONLINE'], env['BB_SHADNET_SERVER']),
+                         ('1', '1', '100.65.141.9:31313'))
+        # A new launcher version tries The Hunter's Dream again.
+        with mock.patch.object(launcher, 'CLIENT_VERSION', 'bbport-jgamrot 9.9'):
+            self.assertFalse(launcher.thd_refused())
+            self.assertEqual(launcher.game_environment(self.settings)['BB_NET_BACKEND'], 'thd')
+        self.assertTrue(launcher.thd_refused())
 
     def test_https_trusts_the_shipped_roots_and_explains_certificate_errors(self):
         # Issue #13: CERTIFICATE_VERIFY_FAILED on a PC whose Windows store lacks the roots.

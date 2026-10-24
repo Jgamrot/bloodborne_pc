@@ -18,6 +18,7 @@
 #include <unistd.h>
 #endif
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -388,6 +389,23 @@ std::uint64_t source_key(std::uint32_t addr, std::uint16_t port_nbo) {
     return addr | (static_cast<std::uint64_t>(port_nbo) << 32);
 }
 
+// The server's addresses (nbo): every STUN server asked, and what P2pStop adds. Once stopped,
+// nothing is sent to them.
+std::atomic<bool> g_p2p_stopped{false};
+std::mutex g_server_mu;
+std::vector<std::uint32_t> g_server_addrs;
+void server_addr_add(std::uint32_t addr) {
+    std::lock_guard lk(g_server_mu);
+    if (std::find(g_server_addrs.begin(), g_server_addrs.end(), addr) == g_server_addrs.end()) {
+        g_server_addrs.push_back(addr);
+    }
+}
+bool to_stopped_server(std::uint32_t addr) {
+    if (!g_p2p_stopped.load()) return false;
+    std::lock_guard lk(g_server_mu);
+    return std::find(g_server_addrs.begin(), g_server_addrs.end(), addr) != g_server_addrs.end();
+}
+
 std::map<std::uint16_t, std::shared_ptr<UdpPort>> g_p2p_ports;
 
 struct NetSock {
@@ -622,6 +640,7 @@ int dgram_send(int s, const void* buf, std::uint64_t len, int flags, const SceSo
     const sockfd_t fd = sock.port ? sock.port->fd : sock.fd;
     if (!sock_ok(fd)) return static_cast<int>(len);
     if (!to) return net_err(EINVAL);
+    if (to_stopped_server(to->addr)) return static_cast<int>(len); // relayed peers included
     std::uint8_t pkt[2048];
     std::size_t hdr = 0;
     const std::uint16_t dst_vport = bswap16(to->vport);
@@ -1062,6 +1081,7 @@ s32 PS4_SYSV_ABI ctl_nat(void* info) {
 
 bool P2pStun(const char* host, std::uint16_t sport, int timeout_ms, std::uint32_t* mapped_addr,
              std::uint16_t* mapped_port, Relay* relay) {
+    if (g_p2p_stopped.load()) return false;
     wsa_start();
     addrinfo hints{};
     hints.ai_family = AF_INET;
@@ -1075,9 +1095,11 @@ bool P2pStun(const char* host, std::uint16_t sport, int timeout_ms, std::uint32_
     std::memcpy(&sa, res->ai_addr, sizeof(sa));
     sa.sin_port = bswap16(sport);
     freeaddrinfo(res);
+    server_addr_add(sa.sin_addr.s_addr);
     std::shared_ptr<UdpPort> port;
     {
         std::lock_guard lk(g_net_mu);
+        if (g_p2p_stopped.load()) return false; // P2pStop ran meanwhile: no port opened again
         port = p2p_port_open(static_cast<std::uint16_t>(P2pPort()));
     }
     if (!port) return false;
@@ -1103,7 +1125,7 @@ bool P2pStun(const char* host, std::uint16_t sport, int timeout_ms, std::uint32_
     port->stun_cv.wait_for(lk, std::chrono::milliseconds(timeout_ms), [&] { return port->stun_done; });
     const bool ok = port->stun_done;
     port->stun_pending = false;
-    if (!ok) return false;
+    if (!ok || g_p2p_stopped.load()) return false;
     if (mapped_addr) *mapped_addr = port->stun_addr;
     if (mapped_port) *mapped_port = port->stun_port;
     if (relay) {
@@ -1111,7 +1133,7 @@ bool P2pStun(const char* host, std::uint16_t sport, int timeout_ms, std::uint32_
         std::lock_guard rl(g_relay.mu);
         const bool was = g_relay.on;
         const std::uint16_t was_vport = g_relay.vport;
-        if (relay->present) {
+        if (relay->present && !g_p2p_stopped.load()) {
             g_relay.on = true;
             g_relay.server = sa.sin_addr.s_addr;
             g_relay.stun_port = sa.sin_port;
@@ -1136,7 +1158,7 @@ void P2pPunch(const char* label, std::uint32_t addr, std::uint16_t port_host, st
         auto it = g_p2p_ports.find(static_cast<std::uint16_t>(P2pPort()));
         if (it != g_p2p_ports.end()) port = it->second;
     }
-    if (!port || !addr || !port_host) return;
+    if (!port || !addr || !port_host || to_stopped_server(addr)) return;
     {
         std::uint8_t token[kStunTokenLen];
         sockaddr_in stun_sa{};
@@ -1177,6 +1199,48 @@ void P2pPunch(const char* label, std::uint32_t addr, std::uint16_t port_host, st
         Log("net: punch %s %s:%u: %d probes, %s", name.c_str(), ip, bswap16(targets[0].sin_port), sent,
             heard ? "peer heard" : "nothing heard");
     }).detach();
+}
+
+void P2pStop(const std::vector<std::string>& hosts) {
+    g_p2p_stopped.store(true);
+    {
+        std::lock_guard lk(g_relay.mu);
+        if (g_relay.on) server_addr_add(g_relay.server);
+        g_relay.on = false;
+    }
+    wsa_start();
+    for (const std::string& host : hosts) {
+        addrinfo hints{};
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_DGRAM;
+        addrinfo* res = nullptr;
+        if (host.empty() || getaddrinfo(host.c_str(), nullptr, &hints, &res) != 0) continue;
+        for (const addrinfo* a = res; a; a = a->ai_next) {
+            sockaddr_in sa{};
+            std::memcpy(&sa, a->ai_addr, sizeof(sa));
+            server_addr_add(sa.sin_addr.s_addr);
+        }
+        freeaddrinfo(res);
+    }
+    // A port opened for STUN alone closes; one the game's sockets use stays for their peers.
+    std::lock_guard lk(g_net_mu);
+    for (auto it = g_p2p_ports.begin(); it != g_p2p_ports.end();) {
+        const std::shared_ptr<UdpPort> port = it->second;
+        bool unused = false;
+        {
+            std::lock_guard plk(port->mu);
+            unused = port->by_vport.empty();
+        }
+        if (!unused) {
+            ++it;
+            continue;
+        }
+        port->stop.store(true, std::memory_order_relaxed);
+        if (port->reader.joinable()) port->reader.join();
+        if (sock_ok(port->fd)) sock_close(port->fd);
+        port->fd = kBadSock;
+        it = g_p2p_ports.erase(it);
+    }
 }
 
 std::string DetectLanAddress(const std::string& host) {
