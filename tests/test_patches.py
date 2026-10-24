@@ -17,7 +17,7 @@ from patches import (EBOOT_BASE, FIXES, FPS_PRESETS, OUTPUT_SIZE, RESOLUTION_TEM
                      eboot_matches_patches, patch_fingerprint, patch_sites, game_app_version,
                      eboot_is_109, SCALED_BASE, SCALED_FPS, SCALED_VALUES, fps_preset, rate_scaled,
                      eboot_segments, rate_corrections, camera_value, EFFECT_RATE_SITES,
-                     CLOTH_STIFFNESS, CLOTH_LEFT_OUT, CLOTH_SUBSTEPS, CLOTH_CAVES, CAMERA_FIELDS, frame_steps, preset_writes, with_external,
+                     CLOTH_STIFFNESS, CLOTH_LEFT_OUT, CLOTH_SUBSTEPS, CLOTH_CAVES, WIND_STEP, WIND_STEP_LOAD, WIND_FORCE_LOAD, WIND_PACE, CAMERA_FIELDS, frame_steps, preset_writes, with_external,
                      HEAP_PATCH, HEAP_GUARD, pc_heaps_enabled, site_matches,
                      HASH_GUARDS, guarded_patches)
 
@@ -280,6 +280,53 @@ class RateCorrectionTests(unittest.TestCase):
             out = dict(preset_writes(XML, ['90 FPS++'], '90', '01.09', SEGMENTS, elf, {}))
         self.assertIn(CLOTH_SUBSTEPS - EBOOT_BASE, out)  # the fixed rates keep theirs
 
+    @unittest.skipUnless(GAME_ELF.is_file(), 'needs a prepared 1.09 eboot.elf (BB_TEST_EBOOT_ELF)')
+    def test_wind_at_30s_pace_and_bend(self):
+        elf = GAME_ELF.read_bytes()
+        load, force, pace = (a - EBOOT_BASE for a in (WIND_STEP_LOAD, WIND_FORCE_LOAD, WIND_PACE))
+        target = lambda insn, data: insn + 8 + struct.unpack('<i', data[-4:])[0]
+
+        def writes(fps, preset, env=None):
+            with mock.patch.dict('os.environ', env or {}, clear=True), redirect_stdout(io.StringIO()):
+                return dict(preset_writes(XML, preset, fps, '01.09', SEGMENTS, elf, {}))
+        for fps, preset in (('60', ['60 FPS++']), ('90', ['90 FPS++']), ('120', [SCALED_BASE]),
+                            ('144', [SCALED_BASE]), ('uncap', ['Uncap FPS++'])):
+            with self.subTest(fps=fps):
+                out = writes(fps, preset)
+                # The bend: the force weighed by the game's own 1/60, as at 30.
+                self.assertEqual(out[force][:4], bytes.fromhex('c57a1035'))
+                self.assertEqual(target(WIND_FORCE_LOAD, out[force]), WIND_STEP)
+                self.assertEqual(eboot_bytes(elf, WIND_STEP - EBOOT_BASE, WIND_STEP - EBOOT_BASE + 4),
+                                 struct.pack('<f', 1 / 60))
+                self.assertNotIn(WIND_STEP - EBOOT_BASE, out)
+                if fps == 'uncap':  # src/wind_pace.c steps it each frame
+                    self.assertNotIn(load + 4, out)
+                    continue
+                # The pace: 1/60 s of wind each 1/30 s of game time, half a second a second.
+                self.assertEqual(target(WIND_STEP_LOAD, out[load + 4]), WIND_PACE)
+                step = struct.unpack('<f', out[pace])[0]
+                self.assertAlmostEqual(step * int(fps), 0.5, places=6)
+                off = writes(fps, preset, {'BB_WIND_FIX': '0'})
+                self.assertNotIn(force, off)
+                self.assertEqual(off.get(load + 4), None if fps in ('60', '90') else
+                                 dict(compile_patches(XML, preset, '01.09', SEGMENTS))[load + 4])
+
+    def test_wind_left_alone_on_other_code(self):
+        writes = compile_patches(XML, ['90 FPS++'], '01.09', SEGMENTS)
+        for elf in (fake_elf(0, bytes(16)), fake_elf(WIND_STEP - EBOOT_BASE, struct.pack('<2f', 1 / 60, 1 / 30))):
+            with mock.patch.dict('os.environ', {}, clear=True), redirect_stdout(io.StringIO()) as log:
+                self.assertEqual(rate_corrections(writes, 90, elf, {}), writes)
+            self.assertIn('wind left as the list has it', log.getvalue())
+
+    @unittest.skipUnless(GAME_ELF.is_file(), 'needs a prepared 1.09 eboot.elf (BB_TEST_EBOOT_ELF)')
+    def test_wind_left_alone_where_a_list_writes_its_loads(self):
+        elf = GAME_ELF.read_bytes()
+        for site in (WIND_STEP, WIND_FORCE_LOAD, WIND_STEP_LOAD):
+            writes = [(site - EBOOT_BASE, b'\x90')]
+            with self.subTest(site=hex(site)), mock.patch.dict('os.environ', {}, clear=True), \
+                    redirect_stdout(io.StringIO()):
+                self.assertEqual(rate_corrections(writes, 90, elf, {}), writes)
+
     def test_camera_only_when_asked(self):
         writes, out = self.corrected(144)
         cams = {a - EBOOT_BASE for a in CAMERA_FIELDS}
@@ -336,8 +383,9 @@ class FrameStepTests(unittest.TestCase):
     def test_sites_in_the_game(self):
         elf = GAME_ELF.read_bytes()
         segments = eboot_segments(elf)
+        # The wind's step (WIND_PACE) is one of them; the wind correction sets it to half the step.
         for preset, fps, count in (('90 FPS++', '90', 95), (SCALED_BASE, '120', 78)):
-            with self.subTest(preset=preset), mock.patch.dict('os.environ', {}, clear=True), \
+            with self.subTest(preset=preset), mock.patch.dict('os.environ', {'BB_WIND_FIX': '0'}, clear=True), \
                     redirect_stdout(io.StringIO()):
                 before = rate_scaled(compile_patches(XML, [preset], '01.09', segments), int(fps)) \
                     if preset == SCALED_BASE else compile_patches(XML, [preset], '01.09', segments)
