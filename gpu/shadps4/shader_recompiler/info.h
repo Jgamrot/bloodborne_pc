@@ -208,18 +208,29 @@ struct Info : InfoPersistent {
         return *reinterpret_cast<const T*>(&FlatUserData()[sharp_idx]);
     }
 
+    /// bbport: the table pointer in user data register ptr_index is null, or null plus an
+    /// offset: nothing is mapped in the first 64 KiB of the guest address space.
+    bool UdPointerNull(u32 ptr_index) const noexcept {
+        if (ptr_index == IR::NumScalarRegs) {
+            return false;
+        }
+        u64 pointer;
+        std::memcpy(&pointer, &UserData()[ptr_index], sizeof(pointer));
+        return (pointer & 0xFFFFFFFFFFFFULL) < 0x10000;
+    }
+
     template <typename T>
     T ReadUdReg(u32 ptr_index, u32 dword_offset) const noexcept {
         T data;
         const auto ud = UserData();
         const u32* base = ud.data();
+        // bbport: an unbound descriptor table must reach the existing empty-sharp handling.
+        if (UdPointerNull(ptr_index)) {
+            return T{};
+        }
         if (ptr_index != IR::NumScalarRegs) {
             std::memcpy(&base, &ud[ptr_index], sizeof(base));
             base = reinterpret_cast<const u32*>(VAddr(base) & 0xFFFFFFFFFFFFULL);
-        }
-        // bbport: an unbound descriptor table must reach the existing empty-sharp handling.
-        if (!base) {
-            return T{};
         }
         std::memcpy(&data, base + dword_offset, sizeof(T));
         return data;
