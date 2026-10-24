@@ -69,15 +69,17 @@ def preset_writes(xml,preset,fps,app_version,segments,elf=None,settings=None):
     if fps in SCALED_FPS:
         writes=rate_scaled(writes,SCALED_FPS[fps])
         print(f'Patches: {fps} FPS: {SCALED_BASE} with its frame-rate values for {fps}')
+    else:
+        writes+=cloth_writes(xml,app_version,segments,elf,PRESET_RATES.get(fps),settings or {})
     writes=rate_corrections(writes,PRESET_RATES.get(fps),elf,settings or {})
     return frame_steps(writes,PRESET_RATES.get(fps),elf,settings or {})
 
 
 # Corrections to the community frame-rate lists (Kyo's 1.0 lists), from Awakenchan/BloodBorneButPc
 # (after bbhost's frame_rate.cpp and follow_camera.cpp, Kyo's 1.3 lists and yogesh1239's AI/Camera
-# fix). They change only sites a list writes (and the camera's own eases): the 60, 90 and uncapped
-# lists of this file write none of the effect or cloth sites, so those corrections are for the
-# 120/144 base.
+# fix). They change only sites a list writes (and the camera's own eases, the wind's loads): the
+# 60, 90 and uncapped lists of this file write none of the effect or cloth sites, so those
+# corrections are for the 120/144 base.
 #
 # Effects keep the data's rate (effect_rate_fix=0 / BB_EFFECT_RATE_FIX=0: off). The effect
 # manager's 30.0 (0x26FB39F) and the GPU particle update's (0x4CAD7FC) turn effect data, written in
@@ -93,6 +95,27 @@ EFFECT_RATE_SITES=(0x26FB39F,0x4CAD7FC)
 # leaves as the game has them: the cloth jumped and ran fast at 90 and above.
 CLOTH_STIFFNESS=0x4D3BD00
 CLOTH_LEFT_OUT=((0xB6FBD4,0xB6FBD8),(0xB73F84,0xB73F8D),(0xB73FA8,0xB73FC1),(0x4D3BD10,0x4D3BD20))
+# Kyo's 60, 90 and uncapped lists write none of it, so their cloth ran every substep: the base's
+# substep count (0xB6E67A) and constraint caves (0xB20000-0xB43000) are added for them
+# (cloth_writes). Uncapped the stiffness is 1 until src/cloth_rate.c points the caves at a cell
+# it sets each frame from the frame time (cloth_uncapped=0 / BB_CLOTH_UNCAPPED=0: none of it); it
+# does so above 60 at a fixed preset too, over the (60/fps)^2 written here (BB_FRAME_TIME_PRESETS=0: not).
+CLOTH_SUBSTEPS=0xB6E67A
+CLOTH_CAVES=(0xB20000,0xB43000)
+# Grass and tree wind at 30's pace and bend (wind_fix=0 / BB_WIND_FIX=0: off; after
+# droogie/bbhost). The wind query (0x2713870) steps the gusts' and pushes' times and lives by its
+# load at 0x2713D8D a frame, the game's 1/60 (0x4D29E70): 1/60 s of wind each 1/30 s at 30, fps/30
+# times that with the lists (60, 90, uncapped), twice with the base's real-dt slot (0x2713D91 on).
+# Its load at 0x27149EA weighs the force (the bend) and a push's ramp-in by the same step. The
+# step load reads 0x4D29E74 at 1/(2 fps) instead (the step of the device's +0x100 != 1 branch,
+# only read here) and the force load the game's 1/60; src/wind_pace.c points the step loads at a
+# cell it sets each frame (at a fixed preset over this 1/(2 fps), unless BB_FRAME_TIME_PRESETS=0).
+WIND_STEP=0x4D29E70
+WIND_STEP_LOAD=0x2713D8D       # vmovss xmm4, [rip+disp32]
+WIND_PACE=0x4D29E74
+WIND_FORCE_LOAD=0x27149EA      # vmovdqa xmm14, [rbp-0x170]: vmovss xmm14, [rip+disp32] instead
+WIND_GUARDS=((WIND_STEP_LOAD-EBOOT_BASE,8,'5f5dbe16226b9950'),
+             (WIND_FORCE_LOAD-EBOOT_BASE,8,'b6397d3e89d71a8c'))
 # The follow camera (ChrExFollowCam) eases by weights a frame (camera_fix=1 / BB_CAMERA_FIX=1: on;
 # off by default, as Awakenchan ships it: players found it trailing too far behind when running).
 # The lists store Kyo's 60 fps values for them at every rate - its constructor's immediates (field
@@ -123,7 +146,8 @@ PRESET_RATES={'60':60,'90':90,**SCALED_FPS}  # uncapped: the rate is not known h
 # 90 FPS++), so above 60 FPS they ran fps/60 times as fast: gravity 1.5x at 90, 2x at 120, 2.4x
 # at 144. Each 4-byte line that writes 1/60 where the eboot has the game's 1/30 gets 1/fps.
 # Awakenchan/BloodBorneButPc 0.9.32 beta 6 made the same change (released without source); these
-# sites are found again from the lists and the eboot, not taken from that build.
+# sites are found again from the lists and the eboot, not taken from that build. Below the target
+# src/frame_time.c makes them follow the frame time (tools/frame_time_sites.py; BB_FRAME_TIME_PRESETS=0: not).
 FRAME_STEP_GAME=struct.pack('<f',1/30)
 FRAME_STEP_LIST=struct.pack('<f',1/60)
 
@@ -154,13 +178,61 @@ def camera_value(field, value, frames):
     return value**frames if field==CAMERA_KEPT else 1-(1-value)**frames
 
 
+def cloth_writes(xml, app_version, segments, elf, fps, settings):
+    """The base's cloth writes for a 60, 90 or uncapped list, at a stiffness of (60/fps)^2
+    (uncapped 1, which src/cloth_rate.c follows the frame time from); none with cloth_fix=0 (or
+    uncapped cloth_uncapped=0), or when the eboot has other code where the base writes."""
+    if not setting_on(settings,'cloth_fix','BB_CLOTH_FIX','1'): return []
+    if not fps and not setting_on(settings,'cloth_uncapped','BB_CLOTH_UNCAPPED','1'): return []
+    if elf is None or patch_fingerprint(elf,xml,app_version,[SCALED_BASE])!=SCALED_FINGERPRINT:
+        print('Patches: cloth left as the list has it: this eboot.bin has other code where '
+              f'{SCALED_BASE} writes')
+        return []
+    stiffness=(60/fps)**2 if fps else 1.0
+    out=[]
+    for offset,data in compile_patches(xml,[SCALED_BASE],app_version,segments):
+        a=offset+EBOOT_BASE
+        if a==CLOTH_SUBSTEPS or CLOTH_CAVES[0]<=a<CLOTH_CAVES[1]:
+            out.append((offset,data))
+        elif a==CLOTH_STIFFNESS:
+            out.append((offset,struct.pack('<f',stiffness)*4))
+    print(f'Patches: cloth at {fps or "uncapped"} FPS: one solver substep a frame, stiffness '
+          + (f'{stiffness:.3f}' if fps else '(60 x frame time)^2 each frame (src/cloth_rate.c)'))
+    return out
+
+
+def wind_pace(writes, fps, elf):
+    """`writes` with the wind's step at 1/(2 fps) and its force at the game's 1/60 (uncapped: the
+    force only); None, with nothing changed, when the eboot or the list has other bytes there."""
+    f=lambda v: struct.pack('<f',v)
+    rel=lambda insn,target: struct.pack('<i',target-(insn+8))
+    step,pace,force=WIND_STEP-EBOOT_BASE,WIND_PACE-EBOOT_BASE,WIND_FORCE_LOAD-EBOOT_BASE
+    load=WIND_STEP_LOAD-EBOOT_BASE
+    # The list may write the step load's displacement (the base) and the pace cell, nothing else.
+    own={load+4:4,pace:4}
+    clash=[o for o,d in writes if own.get(o)!=len(d) and any(lo<o+len(d) and o<lo+n for lo,n in
+           ((step,4),(load,8),(force,8),(pace,4)))]
+    if (clash or not all(site_matches(elf,g) for g in WIND_GUARDS)
+            or eboot_bytes(elf,step,step+4)!=f(1/60) or eboot_bytes(elf,pace,pace+4)!=f(1/30)):
+        print(f'Patches: wind left as the list has it (unexpected code at {WIND_STEP_LOAD:#x}, '
+              f'{WIND_FORCE_LOAD:#x} or {WIND_STEP:#x})')
+        return None
+    ours={force:bytes.fromhex('c57a1035')+rel(WIND_FORCE_LOAD,WIND_STEP)}
+    if fps:
+        ours[load+4]=rel(WIND_STEP_LOAD,WIND_PACE)
+        ours[pace]=f(1/(2*fps))
+    out=[(o,ours.pop(o) if o in ours else d) for o,d in writes]
+    return out+sorted(ours.items())
+
+
 def rate_corrections(writes, fps, elf, settings):
-    """The preset's writes with the corrections above for `fps` (None: uncapped; only the
-    effects' rate is put back)."""
+    """The preset's writes with the corrections above for `fps` (None: uncapped; the effects'
+    rate is put back and the wind's force weighed as at 30)."""
     f=lambda v: struct.pack('<f',v)
     effects=setting_on(settings,'effect_rate_fix','BB_EFFECT_RATE_FIX','1')
     cloth=bool(fps and fps>60 and setting_on(settings,'cloth_fix','BB_CLOTH_FIX','1'))
     camera=bool(fps and setting_on(settings,'camera_fix','BB_CAMERA_FIX','0'))
+    wind=bool(elf is not None and setting_on(settings,'wind_fix','BB_WIND_FIX','1'))
     out=[]
     eases=set()
     for offset,data in writes:
@@ -196,7 +268,11 @@ def rate_corrections(writes, fps, elf, settings):
                 out.append((at,f(camera_value(None,value,30/fps))))
             else:
                 print(f'Patches: camera ease at {a:#x} left alone (unexpected code)')
-    names=[n for n,on in (('effect rate',effects),('cloth',cloth),('camera',camera)) if on]
+    if wind:
+        paced=wind_pace(out,fps,elf)
+        wind=paced is not None
+        out=paced if wind else out
+    names=[n for n,on in (('effect rate',effects),('cloth',cloth),('camera',camera),('wind',wind)) if on]
     print(f'Patches: frame-rate corrections: {", ".join(names) or "none"}')
     return out
 

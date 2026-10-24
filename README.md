@@ -216,6 +216,7 @@ page take precedence:
 | 12-second respawn wait | | `BB_RESPAWN_DELAY_FIX=0` restores it |
 | Strict frame cap (no single frame faster than the cap) | | `BB_STRICT_FRAME_CAP=0` |
 | High-FPS sprint fix | `sprint_fix=0` turns it off | `BB_SPRINT_FIX=0` |
+| FPS presets below their target play as the lower rate would (fixed steps, effects' step, turn step, cape stiffness, grass wind and, with `camera_fix=1`, the camera's eases follow each frame's time) | | `BB_FRAME_TIME_PRESETS=0` keeps the preset's per-frame values |
 | Ultrawide camera and centered HUD (non-16:9 outputs) | `output_res=16:9 size` | `BB_ASPECT=0` |
 | Indirect dispatch guard (skips implausible GPU work counts) | | `BB_INDIRECT_GUARD=0` |
 | Pad stick neutral and travel per controller (clone pads) | | `BB_PAD_CENTER_CAL=0`, `BB_PAD_DEADZONE`, `BB_PAD_CENTER` |
