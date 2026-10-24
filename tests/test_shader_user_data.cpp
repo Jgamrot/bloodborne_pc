@@ -30,9 +30,20 @@ int main() {
     // Regression: null table plus a nonzero descriptor offset must not read low memory.
     assert(read() == AmdGpu::Buffer{});
     assert(!read());
+    assert(info.UdPointerNull(pointer_reg));
     // Pointer metadata is masked before deciding whether the table is null.
     set_pointer(0xabcd000000000000ULL);
     assert(read() == AmdGpu::Buffer{});
+    // A null pointer plus an offset (below 64 KiB) is no table either.
+    for (const u64 low : {0x40ULL, 0xfff0ULL, 0xabcd000000000040ULL}) {
+        set_pointer(low);
+        assert(info.UdPointerNull(pointer_reg));
+        assert(read() == AmdGpu::Buffer{});
+    }
+    set_pointer(0x10000);
+    assert(!info.UdPointerNull(pointer_reg));
+    assert(!info.UdPointerNull(Shader::IR::NumScalarRegs));
+    set_pointer(0);
 
     // The vertex consumer must still see an empty descriptor with load overrides applied.
     Shader::Gcn::VertexAttribute attribute{};
@@ -68,5 +79,6 @@ int main() {
     assert(read() == expected);
     Shader::Info::num_ud_snapshots = 0;
 
-    std::puts("Shader user data: null tables, vertex consumers, direct registers and snapshots passed");
+    std::puts("Shader user data: null and low tables, vertex consumers, direct registers and "
+              "snapshots passed");
 }
