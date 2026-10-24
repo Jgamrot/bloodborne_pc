@@ -13,6 +13,7 @@
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
 #include "video_core/renderer_vulkan/vk_shader_prebuild.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
+#include "video_core/shader_build.h"
 #include "common/hash.h"
 
 void SetWindowStatus(const std::string& status); // gpu/shim/window.cpp: the title status
@@ -430,16 +431,31 @@ void PipelineCache::WarmUp() {
         }
     }
 
+    // bbport: the shader build that wrote the cache (gpu/CMakeLists.txt). The versions above are
+    // raised by hand, and a change they missed loaded another build's shaders (dark pictures).
+    static const bool check_build = [] {
+        const char* value = std::getenv("BB_SHADER_BUILD_CHECK");
+        return !value || value[0] != '0';
+    }();
+    const std::string_view build{BB_SHADER_BUILD};
+    const auto save_profile = [&] {
+        std::vector<u8> data(sizeof(profile));
+        std::memcpy(data.data(), &profile, sizeof(profile));
+        Storage::DataBase::Instance().Save(Storage::BlobType::ShaderProfile, "profile",
+                                           std::move(data));
+        Storage::DataBase::Instance().Save(Storage::BlobType::ShaderProfile, "build",
+                                           std::vector<u8>(build.begin(), build.end()));
+    };
+
     // Check if cache is compatible
     std::vector<u8> profile_data{};
     Storage::DataBase::Instance().Load(Storage::BlobType::ShaderProfile, "profile", profile_data);
+    std::vector<u8> build_data{};
+    Storage::DataBase::Instance().Load(Storage::BlobType::ShaderProfile, "build", build_data);
+    const std::string cached_build(build_data.begin(), build_data.end());
     if (profile_data.empty()) {
         Storage::DataBase::Instance().FinishPreload();
-
-        profile_data.resize(sizeof(profile));
-        std::memcpy(profile_data.data(), &profile, sizeof(profile));
-        Storage::DataBase::Instance().Save(Storage::BlobType::ShaderProfile, "profile",
-                                           std::move(profile_data));
+        save_profile();
         if (!prebuild) {
             return;
         }
@@ -452,30 +468,34 @@ void PipelineCache::WarmUp() {
     if (profile_data.size() == sizeof(Shader::Profile)) {
         std::memcpy(&cached_profile, profile_data.data(), sizeof(cached_profile));
     }
-    if (!profile_data.empty() && prebuild &&
-        (profile_data.size() != sizeof(Shader::Profile) || cached_profile != profile)) {
+    const bool other_system = !profile_data.empty() &&
+                              (profile_data.size() != sizeof(Shader::Profile) ||
+                               cached_profile != profile);
+    const bool other_build = !profile_data.empty() && check_build && cached_build != build;
+    if (other_build) {
+        std::printf("Pipeline cache: written by %s, not this one (shader build %s)\n",
+                    cached_build.empty() ? "an earlier build"
+                                         : ("shader build " + cached_build.substr(0, 32)).c_str(),
+                    BB_SHADER_BUILD);
+    }
+    if (prebuild && (other_system || other_build)) {
         // bbport shader pre-build: another GPU, driver features or build: only the SPIR-V is
         // stale. Keep what the draws saw and translate it again for this system below.
-        std::printf("Shader pre-build: the cache was made for another system; its shaders are "
-                    "translated again from the game files\n");
+        std::printf("Shader pre-build: the cache was made for another %s; its shaders are "
+                    "translated again from the game files\n",
+                    other_system ? "system" : "build");
         Storage::DataBase::Instance().ClearType(Storage::BlobType::ShaderBinary);
         Storage::DataBase::Instance().FinishPreload();
-        profile_data.resize(sizeof(profile));
-        std::memcpy(profile_data.data(), &profile, sizeof(profile));
-        Storage::DataBase::Instance().Save(Storage::BlobType::ShaderProfile, "profile",
-                                           std::move(profile_data));
-    } else if (!profile_data.empty() &&
-               (profile_data.size() != sizeof(Shader::Profile) || cached_profile != profile)) {
+        save_profile();
+    } else if (other_system || other_build) {
         // bbport: upstream closed the cache for the session here, so it was never rewritten
         // and every later session compiled every shader again (stutters on each new area).
         // Start a fresh cache for this build and GPU instead.
-        LOG_WARNING(Render, "Pipeline cache isn't compatible with current system: rebuilding it");
+        LOG_WARNING(Render, "Pipeline cache isn't compatible with current {}: rebuilding it",
+                    other_system ? "system" : "build");
         Storage::DataBase::Instance().Clear();
         Storage::DataBase::Instance().FinishPreload();
-        profile_data.resize(sizeof(profile));
-        std::memcpy(profile_data.data(), &profile, sizeof(profile));
-        Storage::DataBase::Instance().Save(Storage::BlobType::ShaderProfile, "profile",
-                                           std::move(profile_data));
+        save_profile();
         return;
     }
 
@@ -533,7 +553,7 @@ void PipelineCache::WarmUp() {
             }
         });
 
-    LOG_INFO(Render, "Preloaded {} pipelines", num_pipelines);
+    LOG_INFO(Render, "Preloaded {} pipelines (shader build {})", num_pipelines, build);
 
     // bbport: shader permutations no stored pipeline uses. A draw that may write object motion
     // first compiles its plain permutation, then the motion one its pipeline actually uses:

@@ -50,6 +50,17 @@ class CatalogTests(unittest.TestCase):
             self.assertEqual(sorted(p.name for p in catalog.iterdir()), ['a.meta', 'p.key'])
             self.assertEqual(shader_catalog.merge(catalog, [cache]), (0, 2))
 
+    def test_the_cache_profile_and_shader_build_are_not_shipped(self):
+        # Any build seeds from the catalog; only the cache it seeds records the shader build.
+        with tempfile.TemporaryDirectory() as folder:
+            cache, catalog = Path(folder) / 'cache', Path(folder) / 'catalog'
+            cache.mkdir()
+            (cache / 'a.meta').write_bytes(struct.pack('<I', shader_catalog.SHADER_META_VERSION))
+            (cache / 'build.bin').write_bytes(b'0123456789abcdef')
+            (cache / 'profile.bin').write_bytes(b'\x01' * 64)
+            self.assertEqual(shader_catalog.merge(catalog, [cache]), (1, 1))
+            self.assertEqual([p.name for p in catalog.iterdir()], ['a.meta'])
+
     def test_rejected_translations_are_left_out(self):
         with tempfile.TemporaryDirectory() as folder:
             cache, catalog = Path(folder) / 'cache', Path(folder) / 'catalog'
