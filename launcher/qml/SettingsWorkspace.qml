@@ -265,20 +265,21 @@ Item {
                         GlassButton { text: "Open saves folder"; width: 160; height: 38; onClicked: launcher.action("openSaves") }
                         GlassButton { text: "Check again"; width: 120; height: 38; onClicked: launcher.refreshReadiness() }
                     }
-                    // The Hunter's Dream (hidden with BB_HUNTERS_DREAM=0): Discord sign-in by a code approved on its website.
-                    Note { visible: is("Online", "The Hunter's Dream"); text: "The Hunter's Dream (thehuntersdream.com) is the public online server: messages, bloodstains, summons and invasions with players on bbhost and the other Bloodborne ports. Sign in once with Discord: press the button, sign in with Discord on the page that opens, and approve the code. Then choose \"Online · The Hunter's Dream\" under Play on the Home page. Seamless co-op with your friends is separate: Settings → Co-op." }
-                    Note { visible: is("Online", "The Hunter's Dream"); text: launcher.thdStatus; color: Theme.text; font.pixelSize: 13 }
-                    Row { visible: is("Online", "The Hunter's Dream") && launcher.thdCode !== ""; spacing: 14
+                    // The Hunter's Dream (shown with BB_HUNTERS_DREAM=1): Discord sign-in by a code approved on its website.
+                    Note { visible: is("Online", "The Hunter's Dream") && !launcher.huntersDreamPool; text: "The Hunter's Dream doesn't accept this build, so it's off for now. Offline play and seamless co-op (Settings → Co-op) work as before." }
+                    Note { visible: is("Online", "The Hunter's Dream") && launcher.huntersDreamPool; text: "The Hunter's Dream (thehuntersdream.com) is the public online server: messages, bloodstains, summons and invasions with players on bbhost and the other Bloodborne ports. Sign in once with Discord: press the button, sign in with Discord on the page that opens, and approve the code. Then choose \"Online · The Hunter's Dream\" under Play on the Home page. Seamless co-op with your friends is separate: Settings → Co-op." }
+                    Note { visible: is("Online", "The Hunter's Dream") && launcher.huntersDreamPool; text: launcher.thdStatus; color: Theme.text; font.pixelSize: 13 }
+                    Row { visible: is("Online", "The Hunter's Dream") && launcher.huntersDreamPool && launcher.thdCode !== ""; spacing: 14
                         Text { text: launcher.thdCode; color: Theme.text; font.family: Theme.sans; font.pixelSize: 30; font.letterSpacing: 4; anchors.verticalCenter: parent.verticalCenter }
                         GlassButton { text: "Copy code"; width: 120; height: 38; anchors.verticalCenter: parent.verticalCenter; onClicked: launcher.thdCopyCode() }
                     }
-                    Row { visible: is("Online", "The Hunter's Dream"); spacing: 10
+                    Row { visible: is("Online", "The Hunter's Dream") && launcher.huntersDreamPool; spacing: 10
                         GlassButton { text: launcher.thdBusy ? "Waiting for Discord…" : (launcher.thdSignedIn ? "Sign in again" : "Sign in with Discord"); width: 200; height: 38; enabled: !launcher.thdBusy; onClicked: launcher.thdSignIn() }
                         GlassButton { visible: launcher.thdBusy; text: "Cancel"; width: 110; height: 38; onClicked: launcher.thdCancel() }
                         GlassButton { visible: !launcher.thdBusy && launcher.thdSignedIn; text: "Sign out"; width: 110; height: 38; onClicked: launcher.thdSignOut() }
                         GlassButton { text: "Test connection"; width: 148; height: 38; onClicked: launcher.testConnection() }
                     }
-                    Note { visible: is("Online", "The Hunter's Dream"); text: "The connection to The Hunter's Dream is Awaken's port of bbhost's network code (GPL-3.0), as Supermedo's port took it in; bbhost and The Hunter's Dream are by droogie and its team. Seamless co-op (the Co-op page) does not use it." }
+                    Note { visible: is("Online", "The Hunter's Dream") && launcher.huntersDreamPool; text: "The connection to The Hunter's Dream is Awaken's port of bbhost's network code (GPL-3.0), as Supermedo's port took it in; bbhost and The Hunter's Dream are by droogie and its team. Seamless co-op (the Co-op page) does not use it." }
                     Note { visible: is("Co-op", "Seamless co-op"); text: "Experimental. Seamless co-op is BBSC by CLS_AMG (Bloodborne Seamless Co-op 0.0.1): one session through deaths, lamps, areas and bosses, each hunter keeping their own character. One of you hosts the server on their PC; both need Tailscale (tailscale.com) signed in to the same tailnet. Your saves are backed up before every session. Normal play and online are unchanged." }
                     Note { visible: is("Co-op", "Seamless co-op") || is("Co-op", "Host a session") || is("Co-op", "Join a host"); text: launcher.coopStatus }
                     Row { visible: is("Co-op", "Seamless co-op"); spacing: 10

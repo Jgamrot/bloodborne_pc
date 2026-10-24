@@ -69,8 +69,9 @@ the guide. They are made from your own game files at start, which stay unchanged
   Old Hunters' areas. Every player in a session needs it on.
 
 **Also**
-- Online play (beta): messages, bloodstains and ghosts through
-  [The Hunter's Dream](https://thehuntersdream.com), and co-op through a shadNet server.
+- Online play (beta): seamless co-op on a server one of the players runs, and online through a
+  private shadNet server. [The Hunter's Dream](https://thehuntersdream.com) is off for now: it
+  doesn't accept this build (#10); `BB_HUNTERS_DREAM=1` shows it again.
 - Death respawns skip the game's fixed 12-second wait.
 - Mods and third-party patches, loaded without changing your game files.
 - The Old Hunters on base-game dumps, with a DLC folder setting.
