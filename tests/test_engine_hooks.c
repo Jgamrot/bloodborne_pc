@@ -76,6 +76,15 @@ static BB_GUEST_ABI int64_t replace_sum(int64_t a, int64_t b) {
 int main(void) {
     unsigned char *image = VirtualAlloc(NULL, IMAGE, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
     assert(image);
+    /* A TCB load hashes the same as the executable's fs: form once the loader has rewritten it. */
+    {
+        const unsigned char fs[] = {0x90, 0x64, 0x48, 0x8b, 0x04, 0x25, 0, 0, 0, 0, 0xc3};
+        const unsigned char gs[] = {0x90, 0x65, 0x48, 0x8b, 0x04, 0x25, 0x10, 0x14, 0, 0, 0xc3};
+        const unsigned char other[] = {0x90, 0x65, 0x48, 0x8b, 0x05, 0x25, 0x10, 0x14, 0, 0, 0xc3};
+        assert(bb_code_hash(fs, sizeof(fs)) == bb_code_hash(gs, sizeof(gs)));
+        assert(bb_code_hash(fs, sizeof(fs)) != bb_code_hash(other, sizeof(other)));
+        assert(bb_code_is(gs, code_of(fs, sizeof(fs))));
+    }
     memset(image, 0xcc, IMAGE);
     memcpy(image + SUM, sum_code, sizeof(sum_code));
     memcpy(image + ADD, add_code, sizeof(add_code));

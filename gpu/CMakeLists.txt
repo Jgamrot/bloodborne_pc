@@ -269,7 +269,9 @@ if (WIN32)
     set_target_properties(atrac9 PROPERTIES C_STANDARD 99 INTERPROCEDURAL_OPTIMIZATION OFF)
     add_executable(bb-probe ../src/probe.c ${BB_RUNTIME} ../src/compat_win.c ../src/vulkan_smoke.c
         ../src/engine_hooks.c ../src/engine_features.c ../src/pc_menu.c ../src/rebirth.c ../src/input_bindings.c ../src/mouse_camera.c ../src/key_prompts.c ../src/menu_pointer.c
-        ../src/occlusion_queries.c ../packaging/windows/bb-probe.rc)
+        ../src/occlusion_queries.c ../src/effect_step_gate.c ../src/effect_smooth_steps.c ../src/light_blink.c
+        ../src/water_gate.c
+        ../packaging/windows/bb-probe.rc)
     target_sources(bb-probe PRIVATE ../src/aspect_ratio.cpp)
     target_compile_definitions(bb-probe PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
     set_target_properties(bb-probe PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
@@ -317,6 +319,18 @@ if (WIN32)
     add_executable(engine-hooks-test EXCLUDE_FROM_ALL ../tests/test_engine_hooks.c ../src/engine_hooks.c)
     target_include_directories(engine-hooks-test PRIVATE ../src)
     target_compile_options(engine-hooks-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+    add_executable(effect-step-gate-test EXCLUDE_FROM_ALL ../tests/test_effect_step_gate.c
+        ../src/effect_step_gate.c ../src/effect_smooth_steps.c ../src/engine_hooks.c)
+    target_include_directories(effect-step-gate-test PRIVATE ../src)
+    target_compile_options(effect-step-gate-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+    add_executable(light-blink-test EXCLUDE_FROM_ALL ../tests/test_light_blink.c ../src/light_blink.c
+        ../src/engine_hooks.c)
+    target_include_directories(light-blink-test PRIVATE ../src)
+    target_compile_options(light-blink-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+    add_executable(water-gate-test EXCLUDE_FROM_ALL ../tests/test_water_gate.c ../src/water_gate.c
+        ../src/engine_hooks.c)
+    target_include_directories(water-gate-test PRIVATE ../src)
+    target_compile_options(water-gate-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
     # Issue #6: pread from one thread, lseek + read from another, on one descriptor.
     add_executable(file-offsets-test EXCLUDE_FROM_ALL ../tests/test_file_offsets.c ../src/compat_win.c)
     target_include_directories(file-offsets-test PRIVATE ../src)
