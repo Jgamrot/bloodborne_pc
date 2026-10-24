@@ -54,8 +54,7 @@ Starting
   C transform, left mouse attack, Shift + left mouse or V strong attack, right mouse firearm,
   Q lock on, arrow keys d-pad, G gestures, T personal effects, Escape menu, hold Left Alt to
   walk. Rebind with key_<action>= lines in bbport.ini (see "Key bindings" below). Choosing
-  Keyboard prompts in the launcher (it imports your own PCBButtons download from Nexus Mods)
-  switches to the keys its images show instead.
+  Keyboard prompts in the launcher switches to the keys its images show instead.
 - In the game's menus the mouse points and clicks; right click goes back. Hold the strong
   attack modifier (Shift, or Ctrl with Keyboard prompts) and click to press the menus' L2 / R2
   buttons instead: modifier + right click is L2, modifier + left click is R2 (for example the

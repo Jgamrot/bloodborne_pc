@@ -517,7 +517,8 @@ class LauncherBackend(QObject):
 
     @staticmethod
     def _is_prompt_mod(name):
-        return ('xbox' in name.lower() and 'prompt' in name.lower()) or name == core.KEYBOARD_PROMPTS
+        return (('xbox' in name.lower() and 'prompt' in name.lower()) or name == core.KEYBOARD_PROMPTS
+                or name in core.LEGACY_PROMPT_MODS)
 
     @Property('QVariantList', notify=changed)
     def contentMods(self):
@@ -532,7 +533,7 @@ class LauncherBackend(QObject):
     def promptChoice(self):
         """From the mods in use, so a choice made in the game's overlay shows here too."""
         enabled = {m['name'] for m in self._mods if self._is_prompt_mod(m['name']) and m['enabled']}
-        if core.KEYBOARD_PROMPTS in enabled:
+        if enabled & {core.KEYBOARD_PROMPTS, core.LEGACY_KEYBOARD_PROMPTS}:
             return 'Keyboard'
         return 'Xbox' if enabled else 'PlayStation'
 
@@ -985,46 +986,27 @@ class LauncherBackend(QObject):
     def _mods_dir(self):
         return Path(self.app.get('mods_dir') or core.DATA_DIR / 'mods')
 
-    def _choose_prompt_download(self, choice):
-        """The player's own download of a prompt pack: opens its Nexus page, then asks for the
-        file. '' when cancelled."""
-        _, page, title, creator = core.PROMPT_PACKS[choice]
-        webbrowser.open(page)
-        source, _ = QFileDialog.getOpenFileName(
-            None, f'Choose your {title} download (by {creator}, opened on Nexus Mods)',
-            str(Path.home() / 'Downloads'), 'Prompt mod download (*.zip *.7z *.rar common.tpf.dcx);;All files (*)')
-        return source
-
     @Slot(str)
     def setPrompt(self, choice):
-        """Xbox and Keyboard: prompt images from Nexus Mods (Dommo's Xbox prompts; JinkiJinn's
-        PCBButtons key images, with the keys those images show bound in bbport.ini). The port does
-        not ship them: the first time, the player's own download is added to the mods folder
-        (core.install_prompt_pack). PlayStation: the game's own."""
+        """Xbox and Keyboard: Kenney's prompt images, written into the game's own
+        menu/common.tpf.dcx the first time (core.install_prompt_pack); Keyboard also binds the keys
+        its images show in bbport.ini. PlayStation: the game's own."""
         if choice not in ('Xbox', 'PlayStation', 'Keyboard'):
             return
         names = [m['name'] for m in self._mods if self._is_prompt_mod(m['name'])]
-        xbox = [n for n in names if n != core.KEYBOARD_PROMPTS]
-        if (choice == 'Xbox' and not xbox) or (choice == 'Keyboard' and core.KEYBOARD_PROMPTS not in names):
-            _, page, title, creator = core.PROMPT_PACKS[choice]
-            source = self._choose_prompt_download(choice)
-            if not source:
-                self._set_notice(f'{choice} prompts are a separate download: get {title} by {creator} from '
-                                 f'{page}, then choose {choice} again and pick the downloaded file.')
-                return
+        if choice in core.PROMPT_PACKS and core.PROMPT_PACKS[choice][0] not in names:
             try:
-                core.install_prompt_pack(choice, source, self._mods_dir())
+                core.install_prompt_pack(choice, self.app.get('game_dir'), self._mods_dir())
             except (OSError, ValueError) as error:
                 self._set_notice(str(error))
                 return
             self.refresh_addons()
             names = [m['name'] for m in self._mods if self._is_prompt_mod(m['name'])]
-            xbox = [n for n in names if n != core.KEYBOARD_PROMPTS]
         profile_file = core.DATA_DIR / 'mods.json'
         profile_file.parent.mkdir(parents=True, exist_ok=True)
         profile = core.load_json(profile_file, {})
         disabled, enabled = set(profile.get('disabled', [])), set(profile.get('enabled', []))
-        chosen = {'Xbox': xbox[:1], 'Keyboard': [core.KEYBOARD_PROMPTS]}.get(choice, [])
+        chosen = [core.PROMPT_PACKS[choice][0]] if choice in core.PROMPT_PACKS else []
         for name in names:
             (disabled.discard if name in chosen else disabled.add)(name)
             (enabled.add if name in chosen else enabled.discard)(name)

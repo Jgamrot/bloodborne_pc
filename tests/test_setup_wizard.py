@@ -83,46 +83,36 @@ class FirstRunWizardTests(unittest.TestCase):
         backend.setValue('game_dir', str(game))
         self.assertEqual(backend.startupProblem, '')
 
-    def download(self, members):
-        """A Nexus-style download: a zip of {member path: bytes}."""
-        import zipfile
-        archive = self.root / f'download-{len(list(self.root.glob("download-*")))}.zip'
-        with zipfile.ZipFile(archive, 'w') as package:
-            for name, data in members.items():
-                package.writestr(name, data)
-        return archive
+    def game_with_menu(self):
+        """A game folder whose menu/common.tpf.dcx has the slots the prompt images replace."""
+        from test_prompt_icons import common_tpf
+        import fromsoft
+        game = self.root / 'CUSA03173'
+        (game / 'dvdroot_ps4' / 'menu').mkdir(parents=True)
+        (game / 'dvdroot_ps4' / 'menu' / 'common.tpf.dcx').write_bytes(fromsoft.dcx_compress(common_tpf()))
+        return game
 
-    def test_prompt_mods_come_from_the_players_own_download(self):
+    def test_prompt_images_are_made_from_the_players_game(self):
         backend = LauncherBackend()
-        self.assertEqual(backend.promptChoice, 'PlayStation')  # the port ships no prompt mods
-        texture = b'DCX\0' + b'keys' * 8
-        # Cancelled: nothing changes and the notice says where to get it.
-        with patch.object(LauncherBackend, '_choose_prompt_download', lambda self, choice: ''):
-            backend.setPrompt('Keyboard')
+        self.assertEqual(backend.promptChoice, 'PlayStation')  # the port ships no game textures
+        # No game folder yet: nothing changes and the notice says why.
+        backend.setPrompt('Keyboard')
         self.assertEqual(backend.promptChoice, 'PlayStation')
-        self.assertIn('nexusmods.com/bloodborne/mods/460', backend.notice)
-        keyboard = self.download({'PCBButtons/menu/common.tpf.dcx': texture, 'PCBButtons/readme.txt': b'hi'})
-        with patch.object(LauncherBackend, '_choose_prompt_download', lambda self, choice: str(keyboard)):
-            backend.setPrompt('Keyboard')
+        self.assertIn('game folder', backend.notice)
+        self.assertFalse((self.root / 'mods' / core.KEYBOARD_PROMPTS).exists())
+        game = self.game_with_menu()
+        backend.setValue('game_dir', str(game))
+        backend.setPrompt('Keyboard')
         self.assertEqual(backend.promptChoice, 'Keyboard')
         installed = self.root / 'mods' / core.KEYBOARD_PROMPTS
-        self.assertEqual((installed / 'menu' / 'common.tpf.dcx').read_bytes(), texture)
-        self.assertIn('JinkiJinn', (installed / 'SOURCE.txt').read_text(encoding='utf-8'))
+        texture = (installed / 'menu' / 'common.tpf.dcx').read_bytes()
+        self.assertNotEqual(texture, (game / 'dvdroot_ps4' / 'menu' / 'common.tpf.dcx').read_bytes())
+        self.assertIn('Kenney', (installed / 'SOURCE.txt').read_text(encoding='utf-8'))
         ini = (self.root / 'bbport.ini').read_text(encoding='utf-8')
         self.assertIn('key_roll=Left Shift', ini)
         self.assertIn('key_lock_on=Mouse3', ini)
         self.assertNotIn(core.KEYBOARD_PROMPTS, [m['name'] for m in backend.contentMods])
-        # A download with several variants: the player picks the variant's own file.
-        variants = self.download({'A/menu/common.tpf.dcx': texture, 'B/menu/common.tpf.dcx': texture})
-        with patch.object(LauncherBackend, '_choose_prompt_download', lambda self, choice: str(variants)):
-            backend.setPrompt('Xbox')
-        self.assertIn('2 prompt variants', backend.notice)
-        self.assertEqual(backend.promptChoice, 'Keyboard')
-        chosen = self.root / 'unpacked' / 'common.tpf.dcx'
-        chosen.parent.mkdir()
-        chosen.write_bytes(b'DCX\0xbox')
-        with patch.object(LauncherBackend, '_choose_prompt_download', lambda self, choice: str(chosen)):
-            backend.setPrompt('Xbox')
+        backend.setPrompt('Xbox')
         self.assertEqual(backend.promptChoice, 'Xbox')
         self.assertTrue((self.root / 'mods' / core.XBOX_PROMPTS / 'menu' / 'common.tpf.dcx').is_file())
         # What run.py reads at every start (BB_BUTTON_PROMPTS): the Xbox images, not the keys.
@@ -131,8 +121,8 @@ class FirstRunWizardTests(unittest.TestCase):
         in_use = mods.selected(self.root / 'mods', self.root / 'mods.json')
         self.assertIn(core.XBOX_PROMPTS, in_use)
         self.assertNotIn(core.KEYBOARD_PROMPTS, in_use)
-        # Both added: switching asks for nothing.
-        with patch.object(LauncherBackend, '_choose_prompt_download', lambda self, choice: self.fail('asked')):
+        # Both added: switching writes nothing new.
+        with patch.object(core, 'install_prompt_pack', lambda *args: self.fail('rebuilt')):
             backend.setPrompt('Keyboard')
             self.assertEqual(backend.promptChoice, 'Keyboard')
             # A choice made in the game's overlay (mods.json only) shows in the launcher too.
@@ -144,15 +134,32 @@ class FirstRunWizardTests(unittest.TestCase):
             backend.setPrompt('PlayStation')
             self.assertEqual(backend.promptChoice, 'PlayStation')
 
-    def test_prompt_download_without_a_game_texture_is_refused(self):
+    def test_earlier_nexus_prompt_mods_are_switched_off(self):
+        legacy = self.root / 'mods' / core.LEGACY_KEYBOARD_PROMPTS / 'menu'
+        legacy.mkdir(parents=True)
+        (legacy / 'common.tpf.dcx').write_bytes(b'DCX\0keys')
         backend = LauncherBackend()
-        for members in ({'readme.txt': b'no texture'}, {'menu/common.tpf.dcx': b'not a dcx'}):
-            archive = self.download(members)
-            with patch.object(LauncherBackend, '_choose_prompt_download', lambda self, choice: str(archive)):
-                backend.setPrompt('Keyboard')
-            with self.subTest(members=list(members)):
-                self.assertEqual(backend.promptChoice, 'PlayStation')
-                self.assertFalse((self.root / 'mods' / core.KEYBOARD_PROMPTS).exists())
+        self.assertEqual(backend.promptChoice, 'Keyboard')
+        self.assertNotIn(core.LEGACY_KEYBOARD_PROMPTS, [m['name'] for m in backend.contentMods])
+        backend.setValue('game_dir', str(self.game_with_menu()))
+        backend.setPrompt('Xbox')
+        self.assertEqual(backend.promptChoice, 'Xbox')
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
+        import mods
+        self.assertNotIn(core.LEGACY_KEYBOARD_PROMPTS, mods.selected(self.root / 'mods', self.root / 'mods.json'))
+
+    def test_a_menu_file_that_is_already_a_prompt_mod_is_refused(self):
+        from test_prompt_icons import common_tpf
+        import fromsoft
+        game = self.game_with_menu()
+        (game / 'dvdroot_ps4' / 'menu' / 'common.tpf.dcx').write_bytes(
+            fromsoft.dcx_compress(common_tpf(atlas=(2048, 1024))))
+        backend = LauncherBackend()
+        backend.setValue('game_dir', str(game))
+        backend.setPrompt('Keyboard')
+        self.assertEqual(backend.promptChoice, 'PlayStation')
+        self.assertIn('MENU_Common_00091', backend.notice)
+        self.assertFalse((self.root / 'mods' / core.KEYBOARD_PROMPTS).exists())
 
     def test_launch_options_moved_out_of_advanced(self):
         backend = LauncherBackend()

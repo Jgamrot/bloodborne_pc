@@ -17,9 +17,9 @@ import subprocess
 import sys
 
 PORT = Path(__file__).resolve().parent
-# The keyboard key images (PCBButtons from Nexus Mods), as the launcher adds them to the mods
-# folder (launcher KEYBOARD_PROMPTS).
-KEYBOARD_PROMPTS = 'Keyboard Prompts (PCBButtons)'
+# The keyboard key images as the launcher adds them to the mods folder (launcher
+# KEYBOARD_PROMPTS), and the PCBButtons download earlier launchers added.
+KEYBOARD_PROMPTS = ('Keyboard Prompts (Kenney)', 'Keyboard Prompts (PCBButtons)')
 
 
 # Co-op: the community service that answers Bloodborne's own game-server requests
@@ -393,8 +393,9 @@ def main():
         sys.path.insert(0, str(PORT / 'scripts'))
         import mods as mod_list
         try:
-            keyboard = KEYBOARD_PROMPTS in mod_list.selected(Path(env.get('BB_MODS_DIR', data / 'mods')),
-                                                           Path(env.get('BB_MODS_CONFIG', data / 'mods.json')))
+            selected = mod_list.selected(Path(env.get('BB_MODS_DIR', data / 'mods')),
+                                         Path(env.get('BB_MODS_CONFIG', data / 'mods.json')))
+            keyboard = any(name in selected for name in KEYBOARD_PROMPTS)
         except (OSError, ValueError):
             pass
     env['BB_BUTTON_PROMPTS'] = 'Keyboard' if keyboard else ''

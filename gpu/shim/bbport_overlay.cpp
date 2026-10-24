@@ -962,9 +962,9 @@ void ModsTab() {
         "Choose button prompts and gameplay patches, then restart to apply them.");
     if (const char* enabled = std::getenv("BB_MODS_ENABLED"); enabled && std::strcmp(enabled,"0") == 0)
         Note("Mod loading is off in the launcher. Turn it on there first.", Ink::Warn);
-    // 0 the game's PlayStation buttons, 1 the Xbox prompt mod, 2 the keyboard key images
-    // (PCBButtons). Both mods are the player's own Nexus downloads, which the launcher adds to the
-    // mods folder; run.py reads the choice again at every start.
+    // 0 the game's PlayStation buttons, 1 the Xbox prompt mod, 2 the keyboard key images. The
+    // launcher writes both into the player's own menu file the first time they are chosen there;
+    // run.py reads the choice again at every start.
     Section("Button prompts");
     static const auto xbox_folder = XboxPromptFolder();
     static const std::optional<std::string> keyboard_folder = [] () -> std::optional<std::string> {
@@ -972,8 +972,8 @@ void ModsTab() {
         const auto root = configured && *configured ? std::filesystem::path(configured) :
                           std::filesystem::current_path() / "mods";
         std::error_code ec;
-        const std::string name = "Keyboard Prompts (PCBButtons)";
-        if (std::filesystem::is_directory(root / name, ec)) return name;
+        for (const std::string name : {"Keyboard Prompts (Kenney)", "Keyboard Prompts (PCBButtons)"})
+            if (std::filesystem::is_directory(root / name, ec)) return name;
         return std::nullopt;
     }();
     static int prompt_choice = -1;
@@ -998,9 +998,9 @@ void ModsTab() {
         } else mod_selection_error = "Could not save mods.json. Check the port folder permissions.";
     }
     if (!xbox_folder)
-        Note("Xbox buttons are a Nexus Mods download (Bloodborne mod 30): choose Xbox in the launcher's Controls page to add it.", Ink::Faint);
+        Note("Choose Xbox in the launcher's Controls page once to add the Xbox buttons.", Ink::Faint);
     if (!keyboard_folder)
-        Note("Keyboard keys are a Nexus Mods download (PCBButtons, Bloodborne mod 460): choose Keyboard in the launcher's Controls page to add it.", Ink::Faint);
+        Note("Choose Keyboard in the launcher's Controls page once to add the keyboard keys.", Ink::Faint);
     if (!mod_selection_error.empty())
         Note(mod_selection_error.c_str(), Ink::Accent);
     if (!native) Section("Gameplay and debug");

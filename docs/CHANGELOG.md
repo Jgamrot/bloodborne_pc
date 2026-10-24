@@ -4,6 +4,15 @@ Windows releases of this fork, newest first. Each is on the
 [releases page](https://github.com/Jgamrot/bloodborne_pc/releases) as `bbport-windows.zip`.
 Planned work is in [ROADMAP.md](ROADMAP.md).
 
+## Unreleased
+
+- **Xbox and keyboard prompts without a Nexus download.** Choosing Xbox or Keyboard in the
+  launcher writes Kenney's [Input Prompts](https://kenney.nl/assets/input-prompts) (CC0) into a
+  copy of your own `menu/common.tpf.dcx` in the mods folder: the 20 button glyphs and the HUD's
+  Circle, Cross and L3. Only those textures change, so the port still ships nothing from the
+  game. The keyboard images show the keys Keyboard binds (Space for L3). Prompt mods added by
+  earlier launchers (PCBButtons, Dommo's Xbox prompts) are switched off when you choose again.
+
 ## 2.1
 
 Fixes ported from Supermedo's and Awakenchan's ports for open issues, four community pull

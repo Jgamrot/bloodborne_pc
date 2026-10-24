@@ -701,21 +701,19 @@ def thd_account_check(community, online_id, token):
     return _('Signed in as {0}: accepted by the server').format(online_id)
 
 
-# Button prompt packs. Both are edits of the game's own menu/common.tpf.dcx, so the port does not
-# ship them: the player downloads one from Nexus Mods and the launcher adds it to the mods folder
-# (install_prompt_pack). Keyboard is PCBButtons by JinkiJinn; its images show shadPS4's PC layout,
-# so choosing it also binds those keys (bbport.ini key_*); the engine names keys in text
-# (src/key_prompts.c) when the bindings differ from the images.
-KEYBOARD_PROMPTS = 'Keyboard Prompts (PCBButtons)'
-KEYBOARD_PROMPTS_URL = 'https://www.nexusmods.com/bloodborne/mods/460'
-XBOX_PROMPTS = 'Xbox Prompts (Dommo)'
-XBOX_PROMPTS_URL = 'https://www.nexusmods.com/bloodborne/mods/30'
-# choice: (mods folder name, Nexus page, mod title, creator)
-PROMPT_PACKS = {
-    'Xbox': (XBOX_PROMPTS, XBOX_PROMPTS_URL, 'Xbox (and switch) UI for Bloodborne', 'Dommo'),
-    'Keyboard': (KEYBOARD_PROMPTS, KEYBOARD_PROMPTS_URL, 'PCBButtons', 'JinkiJinn'),
-}
-PROMPT_ARCHIVES = ('.zip', '.7z', '.rar')
+# Button prompt packs: Kenney's Input Prompts (CC0) written into the player's own
+# menu/common.tpf.dcx (scripts/prompt_icons.py, launcher/assets/prompts) and added to the mods
+# folder (install_prompt_pack). The keyboard images show KEYBOARD_PROMPT_LAYOUT, so choosing them
+# also binds those keys (bbport.ini key_*); the engine names keys in text (src/key_prompts.c) when
+# the bindings differ from the images.
+KEYBOARD_PROMPTS = 'Keyboard Prompts (Kenney)'
+XBOX_PROMPTS = 'Xbox Prompts (Kenney)'
+# choice: (mods folder name, launcher/assets/prompts file)
+PROMPT_PACKS = {'Xbox': (XBOX_PROMPTS, 'xbox.json'), 'Keyboard': (KEYBOARD_PROMPTS, 'keyboard.json')}
+# Prompt mods earlier launchers added (the player's Nexus download, or shipped with 1.9.x); still
+# prompt mods, so a choice here turns them off.
+LEGACY_KEYBOARD_PROMPTS = 'Keyboard Prompts (PCBButtons)'
+LEGACY_PROMPT_MODS = (LEGACY_KEYBOARD_PROMPTS, 'Xbox Prompts (Dommo)', 'Xbox 360 Prompts (Elden Ring)')
 KEYBOARD_PROMPT_LAYOUT = {
     'key_interact': 'E', 'key_roll': 'Left Shift', 'key_blood_vial': 'R', 'key_use_item': 'Q',
     'key_transform': 'F', 'key_attack': 'Mouse1', 'key_firearm': 'Mouse2',
@@ -724,49 +722,28 @@ KEYBOARD_PROMPT_LAYOUT = {
 }
 
 
-def _prompt_textures(folder):
-    return [path for path in Path(folder).rglob('*')
-            if path.is_file() and path.name.casefold() == 'common.tpf.dcx']
-
-
-def install_prompt_pack(choice, source, mods_dir):
-    """Adds a prompt pack from the player's own Nexus download: the archive (.zip, .7z or .rar,
-    unpacked with Windows' tar), its unpacked folder or its common.tpf.dcx. Copies the texture to
-    <mods>/<pack>/menu/common.tpf.dcx and returns that mod folder; ValueError when the download
-    has none, or several (a pack with variants: choose the variant's own file)."""
-    name, page, title, creator = PROMPT_PACKS[choice]
-    source = Path(source)
-    with tempfile.TemporaryDirectory(prefix='bbport-prompts-') as scratch:
-        if source.is_dir():
-            found = _prompt_textures(source)
-        elif source.name.casefold() == 'common.tpf.dcx':
-            found = [source]
-        elif source.suffix.casefold() in PROMPT_ARCHIVES:
-            tar = Path(os.environ.get('SystemRoot', r'C:\Windows')) / 'System32' / 'tar.exe'
-            # bsdtar refuses absolute and ../ member paths, so nothing lands outside scratch.
-            result = subprocess.run([str(tar if tar.is_file() else 'tar'), '-xf', str(source), '-C', scratch],
-                                    capture_output=True, text=True, creationflags=NO_WINDOW)
-            if result.returncode:
-                raise ValueError(f'Could not unpack {source.name}: {result.stderr.strip() or result.returncode}. '
-                                 'Unpack it yourself and choose its common.tpf.dcx.')
-            found = _prompt_textures(scratch)
-        else:
-            raise ValueError('Choose the downloaded .zip, .7z or .rar, or the common.tpf.dcx inside it.')
-        if not found:
-            raise ValueError(f'{source.name} has no menu/common.tpf.dcx. Choose the {title} download from {page}.')
-        if len(found) > 1:
-            raise ValueError(f'{source.name} has {len(found)} prompt variants. Unpack it and choose the '
-                             'common.tpf.dcx of the one you want.')
-        with open(found[0], 'rb') as texture:
-            if texture.read(4) != b'DCX\0':
-                raise ValueError(f'{found[0].name} is not a game archive (DCX). Choose the {title} download.')
-        target = Path(mods_dir) / name
-        (target / 'menu').mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(found[0], target / 'menu' / 'common.tpf.dcx')
+def install_prompt_pack(choice, game_dir, mods_dir):
+    """Writes the pack's images into the game's menu/common.tpf.dcx as
+    <mods>/<pack>/menu/common.tpf.dcx and returns that mod folder. ValueError when the game folder
+    has no such file or it is not the 1.09 one."""
+    import prompt_icons
+    from fromsoft import FormatError
+    name, data = PROMPT_PACKS[choice]
+    source = Path(game_dir or '') / 'dvdroot_ps4' / 'menu' / 'common.tpf.dcx'
+    if not source.is_file():
+        raise ValueError(f'{choice} prompts are made from the game\'s menu/common.tpf.dcx: '
+                         'choose the game folder first.')
+    assets = PORT_DIR / 'launcher' / 'assets' / 'prompts'
+    try:
+        texture = prompt_icons.apply(source.read_bytes(), prompt_icons.load(assets / data))
+    except FormatError as error:
+        raise ValueError(f'{choice} prompts: {error}') from None
+    target = Path(mods_dir) / name
+    (target / 'menu').mkdir(parents=True, exist_ok=True)
+    (target / 'menu' / 'common.tpf.dcx').write_bytes(texture)
     (target / 'SOURCE.txt').write_text(
-        f'{title} by {creator}\nSource: {page}\n'
-        f'Added by the launcher from your own download ({source.name}); the port does not ship it.\n',
-        encoding='utf-8')
+        "Input Prompts by Kenney (www.kenney.nl), CC0.\n"
+        'Written by the launcher into your own menu/common.tpf.dcx.\n', encoding='utf-8')
     return target
 
 
