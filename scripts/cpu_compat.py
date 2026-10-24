@@ -27,7 +27,8 @@ LIBC_SHA256 = '4378b47f46f1d856824a6f971db1a0c3f41833b77f49d2fba9538f667a139166'
 STRLEN_SHA256 = '6ee29803ad8be5c14664a718a0d6e95aca73a69b45dd8bfa90fb50c0a3f08087'
 MAX_IMAGE_SIZE = 512 * 1024 * 1024
 SUPPORTED = frozenset(('andn', 'bextr', 'blsr', 'blsi', 'blsmsk', 'tzcnt', 'lzcnt', 'movbe'))
-PLAN_VERSION = 4
+PLAN_VERSION = 5
+SHORT_SPAN_METHOD = 'short_span_entries_v1'
 # D015 is a closed exception, never a general instruction-stealing facility.
 COUNT_SPAN_MODULE_SHA256 = 'd65f0b4f01d59166aed16f8604196d8b7dd805abbf0758b356e8f1354c9429f9'
 COUNT_SPAN_FUNCTION = (0x26addc0, 0x26adf49,
@@ -267,6 +268,76 @@ def partial_allowed():
     return os.environ.get('BB_LEGACY_CPU_ALLOW_PARTIAL', '1') == '1'
 
 
+def short_sites_enabled():
+    """BB_LEGACY_CPU_SHORT_SITES=0 leaves the short spans out, as plans before version 5 did."""
+    return os.environ.get('BB_LEGACY_CPU_SHORT_SITES', '1') != '0'
+
+
+def simulate_bsr():
+    """BB_LEGACY_CPU_SIMULATE_BSR=1 (testing): untranslated LZCNT/TZCNT run as BSR/BSF, as an
+    Ivy Bridge CPU runs them."""
+    return os.environ.get('BB_LEGACY_CPU_SIMULATE_BSR') == '1'
+
+
+LEGACY_PREFIXES = frozenset((0x26, 0x2e, 0x36, 0x3e, 0x64, 0x65, 0x66, 0x67, 0xf0, 0xf2, 0xf3))
+
+
+def as_bit_scan(code):
+    """The prefixes of `code` (starting with an LZCNT or TZCNT) that make it the BSR/BSF of the
+    same length a CPU without LZCNT/BMI1 runs: every F3 becomes DS (3E, no effect in 64-bit
+    mode). None for other code."""
+    at = 0
+    # Redundant prefixes occur (F3 F3, 66 F3, 49 F3 49): a REX counts only right before 0F.
+    while at < len(code) and (code[at] in LEGACY_PREFIXES or code[at] & 0xf0 == 0x40):
+        at += 1
+    if code[at:at + 1] != b'\x0f' or code[at + 1:at + 2] not in (b'\xbc', b'\xbd') or 0xf3 not in code[:at]:
+        return None
+    return bytes(0x3e if byte == 0xf3 else byte for byte in code[:at])
+
+
+def _short_span(site, body, start, end, image, base, entries):
+    """A short span (plan version 5): a count or MOVBE instruction too short for a jump, with
+    the neighbors moved into its trampoline. Returns its body: the translations from the plan
+    and the moved instructions from the image. The offline audit found no entry into the
+    moved instructions; resolved relocations and symbols (`entries`, sorted) are checked again."""
+    span = site.get('span')
+    if not isinstance(span, dict) or set(span) != {'pieces', 'function', 'entry_audit'}:
+        raise ValueError('Legacy CPU short span metadata is incomplete or has unknown fields.')
+    pieces = span['pieces']
+    if (not isinstance(pieces, list) or not 2 <= len(pieces) <= 4
+            or any(not isinstance(p, list) or len(p) != 4 or (p[0] != 'move' and p[0] not in SUPPORTED)
+                   or any(type(n) is not int or n < 0 for n in p[1:]) for p in pieces)):
+        raise ValueError('Legacy CPU short span pieces are invalid.')
+    at = site['address']
+    for kind, address, length, size in pieces:
+        if address != at or not 1 <= length <= 15 or (kind == 'move') != (size == 0):
+            raise ValueError('Legacy CPU short span pieces do not describe its bytes.')
+        at += length
+    translated = [p for p in pieces if p[0] != 'move']
+    if (at != site['address'] + end - start or not translated
+            or site['mnemonic'] not in [p[0] for p in translated if p[2] < 5]
+            or sum(p[3] for p in translated) != len(body)):
+        raise ValueError('Legacy CPU short span pieces do not describe its bytes.')
+    audit = span['entry_audit']
+    if (not isinstance(audit, dict) or audit.get('method') != SHORT_SPAN_METHOD
+            or audit.get('global_indirect_proof') is not False
+            or audit.get('known_entries') != [] or audit.get('unresolved_candidates') != []):
+        raise ValueError('Legacy CPU short span entry audit is missing or found entries.')
+    if site.get('rip_fixups', []) != []:
+        raise ValueError('Legacy CPU short spans cannot contain RIP fixups.')
+    index = bisect.bisect_right(entries, start)
+    if index < len(entries) and entries[index] < end:
+        raise ValueError('Legacy CPU short span has a known interior entry.')
+    code, used = bytearray(), 0
+    for kind, address, length, size in pieces:
+        if kind == 'move':
+            code += image[base + address:base + address + length]
+        else:
+            code += body[used:used + size]
+            used += size
+    return code
+
+
 def patch_libc(module):
     if not enabled():
         return []
@@ -318,11 +389,12 @@ def _relative(target, next_address, label):
 def patch_image(image, segments, main, modules, relocations, *, plan=None, active=None):
     """Return a translated copy of a linked image; never mutate caller inputs.
 
-    A plan (v4) names each site by module, address, length and site_check of its
+    A plan (v5) names each site by module, address, length and site_check of its
     original bytes; it holds no game bytes, which are read from the image. Bodies
     may carry RIP-relative operand fixups, each giving its displacement offset,
     next instruction offset and module-relative target. Count spans are limited
-    to the four D015 sites. No disassembler/assembler is needed at runtime.
+    to the four D015 sites; a short span moves neighbors of an instruction too short
+    for a jump, named by address and length. No disassembler/assembler is needed at runtime.
     All active-profile guards are checked before publishing anything. Disabling
     the profile does not load a plan or change image bytes/segment metadata.
     """
@@ -334,7 +406,8 @@ def patch_image(image, segments, main, modules, relocations, *, plan=None, activ
                   unhandled_count=0, unhandled_by_reason={}, unhandled_by_instruction={}, libc=[],
                   complete_coverage=False, experimental=is_active, semantic_risk_sites=0,
                   plan_version=None, span_patches=0, span_sites=[], spans_experimental=False,
-                  span_entry_safety='not_applicable', span_entry_evidence=[], span_execution_allowed=False)
+                  span_entry_safety='not_applicable', span_entry_evidence=[], span_execution_allowed=False,
+                  short_span_patches=0, short_sites=False, simulated_bsr_sites=0)
     if not is_active:
         return bytearray(image), list(segments), report
     if not isinstance(image, (bytes, bytearray)) or not 0 < len(image) <= MAX_IMAGE_SIZE:
@@ -411,6 +484,17 @@ def patch_image(image, segments, main, modules, relocations, *, plan=None, activ
             raise ValueError('Legacy CPU relocation is outside the image.')
         relocation_targets.append(target)
     relocation_targets.sort()
+    # Known entries into a short span's moved instructions: resolved relocations (kind 0 holds a
+    # final address) and the eboot's symbols and ELF relocations.
+    entries = [r[2] + r[3] for r in relocations if r[1] == 0 and type(r[2]) is int and type(r[3]) is int]
+    symbols = main.get('symbols', [])
+    entries += [s['value'] for s in symbols if s.get('section') and type(s.get('value')) is int]
+    for _, kind, symid, addend in main.get('relocs', []):
+        if kind == 8:
+            entries.append(addend)
+        elif kind in (1, 6, 7) and 0 <= symid < len(symbols) and symbols[symid].get('section'):
+            entries.append(symbols[symid]['value'] + addend)
+    entries.sort()
 
     arena = (len(image) + 65535) & ~65535
     cursor = arena
@@ -418,14 +502,20 @@ def patch_image(image, segments, main, modules, relocations, *, plan=None, activ
     span_reports = []
     span_evidence = []
     counts = collections.Counter()
+    short_spans = 0
+    skipped = []
+    use_short = short_sites_enabled()
     for site in plan['sites']:
         if not isinstance(site, dict) or site.get('module') not in locations:
             raise ValueError('Legacy CPU site references an unknown module.')
         name = site['module']
         address = _uint(site.get('address'), f'{name} site address')
         label = f'{name}+{address:#x}'
+        kind = site.get('kind', 'instruction')
+        if kind not in ('instruction', 'count_span', 'short_span'):
+            raise ValueError(f'Legacy CPU {label}: unsupported site kind.')
         length = site.get('length')
-        if type(length) is not int or not 5 <= length <= 15:
+        if type(length) is not int or not 5 <= length <= (30 if kind == 'short_span' else 15):
             raise ValueError(f'Legacy CPU {label} original length is invalid.')
         check = site.get('check')
         if not isinstance(check, str) or not re.fullmatch('[0-9a-f]{16}', check):
@@ -434,9 +524,6 @@ def patch_image(image, segments, main, modules, relocations, *, plan=None, activ
         mnemonic = site.get('mnemonic')
         if not isinstance(mnemonic, str) or mnemonic not in SUPPORTED:
             raise ValueError(f'Legacy CPU {label}: unsupported instruction.')
-        kind = site.get('kind', 'instruction')
-        if kind not in ('instruction', 'count_span'):
-            raise ValueError(f'Legacy CPU {label}: unsupported site kind.')
         is_span = kind == 'count_span'
         base, size, _ = locations[name]
         start = base + address
@@ -450,7 +537,7 @@ def patch_image(image, segments, main, modules, relocations, *, plan=None, activ
         # longer record cannot be smuggled in as a legacy single instruction.
         short_count_prefix = (original[:3] in (b'\xf3\x0f\xbc', b'\xf3\x0f\xbd')
                               and original[3] & 0xc0 == 0xc0)
-        if not is_span and ('span' in site or short_count_prefix):
+        if kind == 'instruction' and ('span' in site or short_count_prefix):
             raise ValueError(f'Legacy CPU {label}: count span cannot be treated as a single instruction.')
         index = bisect.bisect_left(relocation_targets, start - 7)
         if index < len(relocation_targets) and relocation_targets[index] < end:
@@ -460,6 +547,27 @@ def patch_image(image, segments, main, modules, relocations, *, plan=None, activ
             body.extend(tail)
             if evidence not in span_evidence:
                 span_evidence.append(evidence)
+        elif kind == 'short_span':
+            body = _short_span(site, bytes(body), start, end, image, base, entries)
+            if not use_short:
+                # Left as before plan version 5: short instructions untranslated, a long one
+                # translated along back at its own site.
+                used = 0
+                for piece, at, size, code in site['span']['pieces']:
+                    if piece != 'move' and size < 5:
+                        skipped.append({'module': name, 'address': hex(at), 'mnemonic': piece,
+                                        'reason': 'Short instruction left untranslated (BB_LEGACY_CPU_SHORT_SITES=0).'})
+                    elif piece != 'move':
+                        cursor = (cursor + 15) & ~15
+                        operations.append((base + at, base + at + size, cursor,
+                                           bytes(body[used:used + code]) + b'\xe9' + _relative(
+                                               base + at + size, cursor + code + 5, label),
+                                           b'\xe9' + _relative(cursor, base + at + 5, label) + b'\x90' * (size - 5)))
+                        cursor += code + 5
+                        counts[piece] += 1
+                    used += size if piece == 'move' else code
+                continue
+            short_spans += 1
         cursor = (cursor + 15) & ~15
         fixups = site.get('rip_fixups', [])
         if not isinstance(fixups, list):
@@ -490,7 +598,10 @@ def patch_image(image, segments, main, modules, relocations, *, plan=None, activ
         cursor += len(body) + 5
         if cursor > MAX_IMAGE_SIZE:
             raise ValueError('Legacy CPU translated image exceeds the probe limit.')
-        counts[mnemonic] += 1
+        if kind == 'short_span':
+            counts.update(piece[0] for piece in site['span']['pieces'] if piece[0] != 'move')
+        else:
+            counts[mnemonic] += 1
     by_address = sorted(operations)
     if any(left[1] > right[0] for left, right in zip(by_address, by_address[1:])):
         raise ValueError('Legacy CPU instruction sites overlap or are duplicated.')
@@ -499,8 +610,17 @@ def patch_image(image, segments, main, modules, relocations, *, plan=None, activ
             raise ValueError('Legacy CPU invalid unhandled instruction report.')
         if not isinstance(item.get('mnemonic'), str):
             raise ValueError('Legacy CPU unhandled site has no instruction mnemonic.')
-    semantic_risk = sum(item['mnemonic'] in ('lzcnt', 'tzcnt')
-                        for item in plan['unhandled'])
+    unhandled = plan['unhandled'] + skipped
+    semantic_risk = sum(item['mnemonic'] in ('lzcnt', 'tzcnt') for item in unhandled)
+    simulated = []
+    if simulate_bsr():
+        for item in unhandled:
+            if item['mnemonic'] not in ('lzcnt', 'tzcnt') or not isinstance(item.get('address'), str):
+                continue
+            at = locations[item['module']][0] + int(item['address'], 16)
+            prefixes = as_bit_scan(image[at:at + 15])
+            if prefixes:
+                simulated.append((at, prefixes))
     partial = partial_allowed()
     if span_reports and not partial:
         raise ValueError('Legacy CPU count spans are experimental: global indirect entries are unproven. '
@@ -510,9 +630,10 @@ def patch_image(image, segments, main, modules, relocations, *, plan=None, activ
                          'this CPU may execute them with incorrect BSR/BSF semantics. '
                          'BB_LEGACY_CPU_ALLOW_PARTIAL=1 (the default) runs them.')
     report.update(patched_sites=len(operations), counts_by_instruction=dict(counts),
-                  trampoline_bytes=cursor - arena, unhandled_count=len(plan['unhandled']),
-                  unhandled_by_reason=dict(collections.Counter(x['reason'] for x in plan['unhandled'])),
-                  unhandled_by_instruction=dict(collections.Counter(x['mnemonic'] for x in plan['unhandled'])),
+                  trampoline_bytes=cursor - arena, unhandled_count=len(unhandled),
+                  unhandled_by_reason=dict(collections.Counter(x['reason'] for x in unhandled)),
+                  unhandled_by_instruction=dict(collections.Counter(x['mnemonic'] for x in unhandled)),
+                  short_span_patches=short_spans, short_sites=use_short, simulated_bsr_sites=len(simulated),
                   coverage=plan.get('coverage', {}), semantic_risk_sites=semantic_risk,
                   partial_execution_allowed=partial,
                   span_patches=len(span_reports), span_sites=span_reports, spans_experimental=bool(span_reports),
@@ -530,4 +651,6 @@ def patch_image(image, segments, main, modules, relocations, *, plan=None, activ
             result[start:end] = jump
             result[target:target + len(body)] = body
         new_segments.append((arena, padded_end - arena, 5))
+    for at, prefixes in simulated:
+        result[at:at + len(prefixes)] = prefixes
     return result, new_segments, report

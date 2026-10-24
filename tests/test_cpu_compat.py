@@ -50,10 +50,25 @@ def fixture():
     image[32:37] = original
     digest = 'a' * 64
     return dict(image=image, segments=[(0, 4096, 5)], main={'sha256': digest},
-                modules=[], relocations=[], plan={'version': 4, 'modules': {'eboot.bin': digest},
+                modules=[], relocations=[], plan={'version': cpu_compat.PLAN_VERSION, 'modules': {'eboot.bin': digest},
                 'sites': [{'module': 'eboot.bin', 'address': 32, 'length': 5,
                            'check': cpu_compat.site_check(original),
                            'body': '90', 'mnemonic': 'blsr'}], 'unhandled': []}, active=True)
+
+
+def short_fixture(code=bytes.fromhex('f30fbdc1'), moved=bytes.fromhex('89c3'), translation='90'):
+    """A short span: an LZCNT (or `code`) too short for a jump and the instruction after it."""
+    data = fixture()
+    original = code + moved
+    data['image'][32:32 + len(original)] = original
+    data['plan']['sites'][0] = {
+        'kind': 'short_span', 'module': 'eboot.bin', 'address': 32, 'length': len(original),
+        'check': cpu_compat.site_check(original), 'mnemonic': 'lzcnt', 'body': translation, 'rip_fixups': [],
+        'span': {'pieces': [['lzcnt', 32, len(code), len(translation) // 2], ['move', 32 + len(code), len(moved), 0]],
+                 'function': [0, 4096],
+                 'entry_audit': {'method': cpu_compat.SHORT_SPAN_METHOD, 'global_indirect_proof': False,
+                                 'known_entries': [], 'unresolved_candidates': []}}}
+    return data
 
 
 class ApplyImageTests(unittest.TestCase):
@@ -100,6 +115,7 @@ class ApplyImageTests(unittest.TestCase):
             lambda d: d['image'].__setitem__(32, 0),
             lambda d: d['plan'].update(version=999),
             lambda d: d['plan'].update(version=3),
+            lambda d: d['plan'].update(version=4),
             lambda d: d['plan'].update(version=True),
             lambda d: d['plan'].pop('unhandled'),
             lambda d: d['plan']['sites'][0].update(address=-1),
@@ -193,6 +209,121 @@ class ApplyImageTests(unittest.TestCase):
                     self.assertEqual(report['unhandled_count'], 1)
                     self.assertEqual(report['unhandled_by_reason'], {'Too short for guarded jump': 1})
 
+    def test_short_span_moves_neighbors_from_the_image(self):
+        data = short_fixture()
+        self.assertNotIn('89c3', json.dumps(data['plan']))
+        image, segments, report = cpu_compat.patch_image(**data)
+        target = 37 + struct.unpack_from('<i', image, 33)[0]
+        self.assertEqual(image[32], 0xe9)
+        self.assertEqual(image[37], 0x90)
+        self.assertEqual(image[target:target + 3], bytes.fromhex('9089c3'))
+        self.assertEqual(image[target + 3], 0xe9)
+        self.assertEqual(target + 8 + struct.unpack_from('<i', image, target + 4)[0], 38)
+        self.assertEqual(image[38:4096], data['image'][38:])
+        self.assertEqual((report['patched_sites'], report['short_span_patches'], report['unhandled_count'],
+                          report['semantic_risk_sites'], report['counts_by_instruction']),
+                         (1, 1, 0, 0, {'lzcnt': 1}))
+        # Entries at the span's first byte or right after it are fine.
+        data['main']['symbols'] = [{'section': 1, 'value': 32}, {'section': 1, 'value': 38}]
+        data['relocations'] = [(1000, 0, 30, 2)]
+        self.assertEqual(cpu_compat.patch_image(**data)[2]['short_span_patches'], 1)
+
+    def test_short_span_defects_reject(self):
+        pieces = lambda d: d['plan']['sites'][0]['span']['pieces']
+        site = lambda d: d['plan']['sites'][0]
+        audit = lambda d: d['plan']['sites'][0]['span']['entry_audit']
+        mutations = [
+            lambda d: pieces(d)[1].__setitem__(1, 37),
+            lambda d: pieces(d)[0].__setitem__(3, 2),
+            lambda d: pieces(d)[1].__setitem__(3, 1),
+            lambda d: pieces(d)[1].__setitem__(0, 'call'),
+            lambda d: pieces(d)[1].__setitem__(2, True),
+            lambda d: pieces(d).pop(),
+            lambda d: pieces(d).extend([['move', 38, 1, 0]] * 3),
+            lambda d: pieces(d)[0].__setitem__(0, 'movbe'),
+            lambda d: site(d).update(mnemonic='tzcnt'),
+            lambda d: site(d).update(length=31),
+            lambda d: site(d).update(kind='span'),
+            lambda d: site(d).update(rip_fixups=[{'offset': 0, 'next_offset': 4, 'target': 0}]),
+            lambda d: site(d)['span'].update(safe=True),
+            lambda d: site(d)['span'].pop('entry_audit'),
+            lambda d: audit(d).update(method='safe'),
+            lambda d: audit(d).update(global_indirect_proof=True),
+            lambda d: audit(d).update(known_entries=[{'kind': 'symbol', 'address': 36}]),
+            lambda d: audit(d).update(unresolved_candidates=[{'source': 0, 'target': 36}]),
+            lambda d: d['main'].update(symbols=[{'section': 1, 'value': 36}]),
+            lambda d: d.update(relocations=[(1000, 0, 30, 6)]),
+            lambda d: d['main'].update(relocs=[(1000, 8, 0, 33)]),
+            lambda d: d['image'].__setitem__(37, 0xc2),
+            lambda d: d['plan'].update(version=4),
+        ]
+        for index, mutate in enumerate(mutations):
+            with self.subTest(defect=index):
+                data = short_fixture()
+                mutate(data)
+                self.reject(data)
+
+    def test_short_sites_switch_and_bsr_simulation(self):
+        data = short_fixture()
+        with patch.dict(os.environ, {'BB_LEGACY_CPU_SHORT_SITES': '0'}):
+            image, _, report = cpu_compat.patch_image(**data)
+            self.assertEqual(image[:4096], data['image'])
+            self.assertEqual((report['patched_sites'], report['unhandled_count'], report['semantic_risk_sites'],
+                              report['short_sites'], report['simulated_bsr_sites']), (0, 1, 1, False, 0))
+            with patch.dict(os.environ, {'BB_LEGACY_CPU_ALLOW_PARTIAL': '0'}):
+                self.reject(data)
+            with patch.dict(os.environ, {'BB_LEGACY_CPU_SIMULATE_BSR': '1'}):
+                image, _, report = cpu_compat.patch_image(**data)
+                self.assertEqual(image[32:38], bytes.fromhex('3e0fbdc189c3'))
+                self.assertEqual(report['simulated_bsr_sites'], 1)
+        with patch.dict(os.environ, {'BB_LEGACY_CPU_SIMULATE_BSR': '1'}):
+            report = cpu_compat.patch_image(**data)[2]
+            self.assertEqual((report['short_span_patches'], report['simulated_bsr_sites']), (1, 0))
+        # A long instruction translated along goes back to its own site.
+        data = short_fixture(moved=bytes.fromhex('c4e2f8f3c8'), translation='9090')
+        data['plan']['sites'][0]['span']['pieces'] = [['lzcnt', 32, 4, 1], ['blsr', 36, 5, 1]]
+        with patch.dict(os.environ, {'BB_LEGACY_CPU_SHORT_SITES': '0'}):
+            image, _, report = cpu_compat.patch_image(**data)
+        target = 41 + struct.unpack_from('<i', image, 37)[0]
+        self.assertEqual(image[32:36], data['image'][32:36])
+        self.assertEqual(image[36], 0xe9)
+        self.assertEqual(image[target], 0x90)
+        self.assertEqual(target + 6 + struct.unpack_from('<i', image, target + 2)[0], 41)
+        self.assertEqual((report['patched_sites'], report['counts_by_instruction'], report['unhandled_count']),
+                         (1, {'blsr': 1}, 1))
+        self.assertEqual(cpu_compat.patch_image(**data)[2]['counts_by_instruction'], {'lzcnt': 1, 'blsr': 1})
+
+    def test_bsr_simulation_of_plan_unhandled_sites(self):
+        data = fixture()
+        data['image'][64:69] = bytes.fromhex('66f30fbcc1')
+        data['image'][80:84] = bytes.fromhex('0f38f007')
+        data['plan']['unhandled'] = [
+            {'module': 'eboot.bin', 'address': '0x40', 'mnemonic': 'tzcnt', 'reason': 'short'},
+            {'module': 'eboot.bin', 'address': '0x50', 'mnemonic': 'movbe', 'reason': 'short'}]
+        self.assertEqual(cpu_compat.patch_image(**data)[0][64:84], data['image'][64:84])
+        with patch.dict(os.environ, {'BB_LEGACY_CPU_SIMULATE_BSR': '1'}):
+            image, _, report = cpu_compat.patch_image(**data)
+        self.assertEqual(image[64:69], bytes.fromhex('663e0fbcc1'))
+        self.assertEqual(image[80:84], data['image'][80:84])
+        self.assertEqual(report['simulated_bsr_sites'], 1)
+
+    def test_bit_scan_prefix_forms(self):
+        for code, prefixes in (('f30fbdc1', '3e'), ('f30fbc07', '3e'), ('66f30fbdc1', '663e'),
+                               ('f3480fbdc1', '3e48'), ('49f3490fbdc1', '493e49'), ('f3f30fbcc1', '3e3e'),
+                               ('f34c0fbd4c2408', '3e4c'), ('f30fb8c1', None), ('0fbdc1', None),
+                               ('f3', None), ('', None)):
+            with self.subTest(code=code):
+                found = cpu_compat.as_bit_scan(bytes.fromhex(code))
+                self.assertEqual(found.hex() if found is not None else None, prefixes)
+
+    def test_switch_defaults(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertTrue(cpu_compat.short_sites_enabled())
+            self.assertFalse(cpu_compat.simulate_bsr())
+        with patch.dict(os.environ, {'BB_LEGACY_CPU_SHORT_SITES': '0', 'BB_LEGACY_CPU_SIMULATE_BSR': '1'}):
+            self.assertFalse(cpu_compat.short_sites_enabled())
+            self.assertTrue(cpu_compat.simulate_bsr())
+
 
 class ReferenceTests(unittest.TestCase):
     def test_documented_boundary_values(self):
@@ -267,6 +398,21 @@ class TranslatedBodyTests(unittest.TestCase):
                 at = self.builder.file_offset(mod, site['address'], site['length'], True)
                 original = bytes(mod['elf'][at:at + site['length']])
                 self.assertEqual(cpu_compat.site_check(original), site['check'])
+                if site.get('kind') == 'short_span':
+                    # The body holds the translations only; moved instructions stay in the dump.
+                    rows = list(decoder.disasm_lite(original, site['address']))
+                    pieces = site['span']['pieces']
+                    self.assertEqual([(r[0], r[1]) for r in rows], [(p[1], p[2]) for p in pieces])
+                    expected = b''
+                    for row, (kind, _, length, size) in zip(rows, pieces):
+                        if kind == 'move':
+                            self.assertTrue(self.builder.movable(row, row is rows[-1]), row)
+                        else:
+                            self.assertEqual(row[2], kind)
+                            expected += self.builder.body(row[2], row[3])
+                    self.assertEqual(body, expected)
+                    self.assertTrue(any(p[0] == site['mnemonic'] and p[2] < 5 for p in pieces))
+                    continue
                 _, length, mnemonic, operands = next(decoder.disasm_lite(original, site['address']))
                 self.assertEqual((length, mnemonic), (site['length'], site['mnemonic']))
                 self.assertEqual(body, self.builder.body(mnemonic, operands))
@@ -486,6 +632,56 @@ class TranslatedBodyTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 audit_baseline(bytes.fromhex(source_bytes), capstone)
 
+    def test_short_span_shapes(self):
+        span = self.builder.short_span
+        lz, mov = (0x10, 4, 'lzcnt', 'eax, ecx'), (0x14, 2, 'mov', 'ebx, eax')
+        start, end, pieces = span([lz, mov, (0x16, 2, 'jmp', '0x10')], 0)
+        self.assertEqual((start, end, [p[0] for p in pieces]), (0x10, 0x16, ['translate', 'move']))
+        self.assertEqual(span([lz, (0x14, 1, 'ret', '')], 0)[1], 0x15)
+        self.assertEqual(span([lz, (0x14, 5, 'blsr', 'eax, ecx')], 0)[2][1][0], 'translate')
+        for following in ((0x14, 7, 'mov', 'eax, dword ptr [rip + 0x10]'), (0x14, 2, 'jmp', '0x10'),
+                          (0x14, 9, 'mov', 'rax, qword ptr fs:[0]'), (0x14, 5, 'call', '0x100'),
+                          (0x14, 9, 'movbe', 'eax, dword ptr [rip + 0x10]'), (0x14, 2, 'jmp', 'rax')):
+            with self.subTest(following=following), self.assertRaises(ValueError):
+                span([lz, following], 0)
+        with self.assertRaises(ValueError):
+            span([lz], 0)
+        previous = (0x0c, 4, 'mov', 'edx, dword ptr [rcx]')
+        movbe = (0x10, 4, 'movbe', 'dword ptr [rcx], edx')
+        start, end, pieces = span([previous, movbe, (0x14, 2, 'jmp', '0x0')], 1, backward=True)
+        self.assertEqual((start, end, [p[0] for p in pieces]), (0x0c, 0x14, ['move', 'translate']))
+        for before in ((0x0f, 1, 'ret', ''), (0x0b, 5, 'call', '0x100'), (0x0c, 4, 'lzcnt', 'eax, ecx')):
+            with self.subTest(before=before), self.assertRaises(ValueError):
+                span([before, movbe], 1, backward=True)
+
+    def test_jump_table_targets_name_instruction_starts(self):
+        image = bytearray(0x100)
+        rows = [(0x0, 7, 'lea', 'rax, [rip + 0x39]'), (0x7, 2, 'jmp', 'rax'),
+                (0x9, 4, 'lzcnt', 'eax, ecx'), (0xd, 2, 'mov', 'ebx, eax')]
+        struct.pack_into('<4i', image, 0x40, 0x9 - 0x40, 0xd - 0x40, 0xa - 0x40, 0x200)
+        mod = {'ph': [{'type': 1, 'vaddr': 0, 'filesz': len(image), 'offset': 0}], 'elf': image}
+        self.assertEqual(self.builder.jump_table_targets(mod, rows), {0x9, 0xd})
+        rows[1] = (0x7, 2, 'jmp', '0x9')
+        self.assertEqual(self.builder.jump_table_targets(mod, rows), set())
+
+    def test_short_span_trampoline_runs_both_instructions(self):
+        # lzcnt eax, ecx followed by mov ebx, eax or mov rbx, rax.
+        for width, moved in ((32, '89c3'), (32, '4889c3')):
+            data = short_fixture(moved=bytes.fromhex(moved), translation=self.builder.body('lzcnt', 'eax, ecx').hex())
+            image, _, report = cpu_compat.patch_image(**data)
+            target = 37 + struct.unpack_from('<i', image, 33)[0]
+            size = len(data['plan']['sites'][0]['body']) // 2 + len(moved) // 2
+            self.assertEqual(image[target + size], 0xe9)
+            with NativeHarness(bytes(image[target:target + size]), keystone, capstone) as harness:
+                for value in (0, 1, 0x80000000, MASK64, 0x0000000100000000):
+                    registers = self.registers()
+                    registers['rcx'] = value
+                    count, flags, defined = reference('lzcnt', width, value)
+                    output, actual_flags, before, after = harness.run(registers)
+                    self.assertEqual(output, dict(registers, rax=count, rbx=count, rsp=harness.guest_rsp))
+                    self.assertEqual(actual_flags & defined, flags)
+                    self.assertEqual(after, before)
+
     @classmethod
     def tearDownClass(cls):
         print(f'CPU baseline executions={cls.executions}; MOVBE executions={cls.movbe_executions}; '
@@ -504,8 +700,8 @@ class AllocatorSpanTests(unittest.TestCase):
         spec.loader.exec_module(cls.builder)
         plan = json.loads((ROOT / 'tools/legacy-cpu-plan.json').read_text(encoding='utf-8'))
         cls.sites = [copy.deepcopy(s) for s in plan['sites'] if s.get('kind') == 'count_span']
-        if plan['version'] != 4 or {s['address'] for s in cls.sites} != {s[0] for s in SPANS}:
-            raise AssertionError('Selected CPU subject must contain exactly the four D015 v4 spans')
+        if plan['version'] != cpu_compat.PLAN_VERSION or {s['address'] for s in cls.sites} != {s[0] for s in SPANS}:
+            raise AssertionError('Selected CPU subject must contain exactly the four D015 spans')
         mod = cls.builder.module(Path(os.environ['BB_CPU_GAME_DIR']) / 'eboot.bin')
         at = cls.builder.file_offset(mod, FUNCTION_START, FUNCTION_END - FUNCTION_START, True)
         cls.function = bytes(mod['elf'][at:at + FUNCTION_END - FUNCTION_START])
@@ -526,7 +722,7 @@ class AllocatorSpanTests(unittest.TestCase):
     def fixture(cls):
         return dict(image=cls.base_image, segments=[(0, len(cls.base_image), 5)],
                     main={'sha256': SOURCE_SHA256}, modules=[], relocations=[], active=True,
-                    plan={'version': 4, 'modules': {'eboot.bin': SOURCE_SHA256},
+                    plan={'version': cpu_compat.PLAN_VERSION, 'modules': {'eboot.bin': SOURCE_SHA256},
                           'sites': copy.deepcopy(cls.sites), 'unhandled': []})
 
     def reject(self, data, *, override='1'):
@@ -603,7 +799,7 @@ class AllocatorSpanTests(unittest.TestCase):
                                 for s, n, flags in self.segments))
         self.assertEqual(self.translated[:len(expected)], expected)
         self.assertEqual(hashlib.sha256(self.base_image).hexdigest(), self.base_hash)
-        self.assertEqual(self.report['plan_version'], 4)
+        self.assertEqual(self.report['plan_version'], cpu_compat.PLAN_VERSION)
         self.assertEqual(self.report['patched_sites'], 4)
         self.assertEqual(self.report['span_patches'], 4)
         self.assertEqual(self.report['counts_by_instruction'], {'lzcnt': 3, 'tzcnt': 1})
@@ -714,7 +910,7 @@ class AllocatorSpanTests(unittest.TestCase):
                     data = self.fixture()
                     mutate(data['plan']['sites'][site_index])
                     self.reject(data)
-            for version, stripped in ((3, False), (3, True), (4, True)):
+            for version, stripped in ((3, False), (4, False), (4, True), (cpu_compat.PLAN_VERSION, True)):
                 data = self.fixture()
                 data['plan']['version'] = version
                 if stripped:
