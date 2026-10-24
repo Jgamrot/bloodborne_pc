@@ -20,6 +20,7 @@ from PySide6.QtCore import QObject, Property, Signal, Slot
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 
+import bbport_bindings as bindings_config
 import bbport_coop as coop
 import bbport_launcher_win as core
 import bbport_startup
@@ -167,6 +168,7 @@ SETTINGS_SECTIONS = {
     ],
     'Controls': [
         ('Button prompts', []),
+        ('Key bindings', []),
         ('Mouse', ['mouse_camera', 'mouse_menu', 'mouse_sensitivity', 'mouse_invert_y', 'mouse_hide_cursor']),
         ('Keyboard', ['move_smoothing']),
     ],
@@ -733,6 +735,76 @@ class LauncherBackend(QObject):
     def checked(self, key):
         value = self.value(key)
         return value is True or value == '1'
+
+    # --- Keyboard and mouse bindings (Controls > Key bindings) --------------------------------
+    # The game reads key_<action>= lines from bbport.ini (src/input_bindings.c). Each action
+    # takes up to three bindings and a binding up to three inputs held together, which is what
+    # the page's slots show; a change is written at once and applies the next time the game starts.
+    @Property('QVariantList', notify=changed)
+    def bindings(self):
+        values = bindings_config.read(core.ini_path())
+        rows = []
+        for action, label, defaults in bindings_config.ACTIONS:
+            slots = values.get(action, defaults)
+            cells = []
+            for index in range(bindings_config.SLOTS):
+                binding = slots[index] if index < len(slots) else []
+                cells.append({
+                    'text': bindings_config.pretty_binding(binding) if binding else '—',
+                    'bound': bool(binding),
+                    'value': bindings_config.format_value([binding]) if binding else '',
+                })
+            rows.append({'action': action, 'label': label, 'slots': cells,
+                         'summary': bindings_config.summary(slots)})
+        return rows
+
+    def _binding_slots(self, action):
+        values = bindings_config.read(core.ini_path())
+        slots = [list(binding) for binding in values.get(action, [])]
+        while len(slots) < bindings_config.SLOTS:
+            slots.append([])
+        return slots
+
+    def _save_binding_slots(self, action, slots):
+        bindings_config.write(core.ini_path(), action, slots)
+        self.ini_lines = core.load_ini()[1]
+        self.changed.emit()
+
+    @Slot(str, int, str)
+    def setBinding(self, action, slot, value):
+        """Slot SLOT of ACTION becomes VALUE ("Left Shift+Mouse1", "X", "Mouse2")."""
+        if action not in bindings_config.ACTION_LABELS or not 0 <= slot < bindings_config.SLOTS:
+            return
+        slots = self._binding_slots(action)
+        inputs = [part.strip() for part in str(value).split('+') if part.strip()]
+        slots[slot] = inputs[:bindings_config.COMBO_PARTS]
+        self._save_binding_slots(action, slots)
+
+    @Slot(str, int)
+    def clearBinding(self, action, slot):
+        if action not in bindings_config.ACTION_LABELS or not 0 <= slot < bindings_config.SLOTS:
+            return
+        slots = self._binding_slots(action)
+        slots[slot] = []
+        self._save_binding_slots(action, slots)
+
+    @Slot()
+    def resetBindings(self):
+        """Back to the keys bbport ships with: the key_ lines are removed."""
+        bindings_config.remove_all(core.ini_path())
+        self.ini_lines = core.load_ini()[1]
+        self.changed.emit()
+
+    @Slot(str, int, int, bool, result=str)
+    def bindingText(self, action, slot, qt_key, numpad):
+        """What a captured key would be written as, for the page's preview."""
+        name = bindings_config.key_name(qt_key, numpad)
+        return name
+
+    @Slot(int, result=str)
+    def mouseButtonName(self, button):
+        return bindings_config.mouse_name(button)
+
 
     @Slot()
     def importTrophyKeys(self):
