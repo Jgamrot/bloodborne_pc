@@ -344,6 +344,11 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
         .needs_unorm_fixup = instance.GetDriverID() == vk::DriverId::eMesaKosmickrisp,
         .needs_clip_distance_emulation = instance.GetDriverID() == vk::DriverId::eNvidiaProprietary,
         .supports_shader_stencil_export = instance_.IsShaderStencilExportSupported(),
+        // bbport: BB_GCN_NAN=0 translates as before the GCN NaN/Inf rules, for comparison.
+        .gcn_nan_semantics = [] {
+            const char* env = std::getenv("BB_GCN_NAN");
+            return !env || env[0] != '0';
+        }(),
     };
     auto [cache_result, cache] = instance.GetDevice().createPipelineCacheUnique({});
     ASSERT_MSG(cache_result == vk::Result::eSuccess, "Failed to create pipeline cache: {}",
