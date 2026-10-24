@@ -54,6 +54,9 @@ struct Profile {
     bool needs_unorm_fixup{};
     bool needs_clip_distance_emulation{};
     bool supports_shader_stencil_export{};
+    /// bbport: GCN NaN/Inf rules for min/max/med3, clamp, legacy multiply-adds, clamped
+    /// rcp/rsq and negated compares.
+    bool gcn_nan_semantics{};
 
     bool operator==(const Profile&) const = default;
 };
