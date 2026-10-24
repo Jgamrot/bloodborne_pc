@@ -6,6 +6,7 @@
 
 #include "thd.h"
 #include "thd_internal.h"
+#include "thd_stop.h"
 #include "../../../src/code_check.h"
 
 #include <algorithm>
@@ -58,6 +59,8 @@ std::string HostOf(std::string base) {
     if (const auto colon = base.find(':'); colon != std::string::npos) base = base.substr(0, colon);
     return base;
 }
+TrafficGate g_gate;
+void StopTraffic();
 } // namespace
 
 bool Trace() {
@@ -133,26 +136,29 @@ bool Refused() {
 }
 void MarkRefused(const std::string& reason) {
     std::string name;
+    bool first = false;
     {
         std::lock_guard lk(g_account_mu);
-        if (g_refused) return;
+        first = !g_refused;
         g_refused = true;
         name = g_name;
     }
-    // "This client is not supported ...": the server refuses this build (the User-Agent), not
-    // the account, so a new sign-in gets the same answer (thd_client_refused in the launcher).
-    std::string lower = reason;
-    std::transform(lower.begin(), lower.end(), lower.begin(),
-                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    if (lower.find("client is not supported") != std::string::npos) {
-        Log("the server refused this client (%s) for %s (%s): signing in again does not help; "
-            "offline play and seamless co-op still work",
+    if (IsClientRefusal(reason)) {
+        if (!g_gate.Stop()) return;
+        // The launcher remembers the refusal of this build by this line (THD_REFUSED_LINE).
+        Log("the server refused this client (%s) for %s (%s): all traffic to The Hunter's Dream is "
+            "stopped for this session; offline play and seamless co-op still work",
             Cfg().client.c_str(), name.c_str(), reason.c_str());
+        StopTraffic();
         return;
     }
+    if (!first) return;
     Log("the server refused this PC's sign-in as %s (%s): sign in again on the launcher's Online "
         "page; until then nobody can summon or invite this player",
         name.c_str(), reason.c_str());
+}
+bool TrafficStopped() {
+    return g_gate.Stopped();
 }
 std::string OnlineId() {
     const std::string name = AccountName();
@@ -269,6 +275,19 @@ bool ParseReply(const std::string& what, const HttpResult& r, Json& out, std::st
     if (logs.fetch_add(1) < 16) Log("np: %s -> %s", what.c_str(), error.c_str());
     return false;
 }
+
+bool Exchange(const std::string& what, const std::string& path, const std::string* post,
+              int timeout_ms, Json& out, std::string& error) {
+    bool ok = false;
+    // The reply is read inside the gate: a refusal stops the requests waiting behind it.
+    const bool sent = g_gate.Run([&] {
+        const HttpResult r = Perform(Cfg().np_base, path, post, timeout_ms);
+        ok = ParseReply(what, r, out, error);
+        return r.status;
+    });
+    if (!sent) error = "traffic to the server is stopped";
+    return sent && ok;
+}
 } // namespace
 
 std::string NpBase() {
@@ -278,11 +297,11 @@ std::string NpBase() {
 bool NpPost(const std::string& path, const Json& body, Json& out, std::string& error,
             int timeout_ms) {
     const std::string text = body.dump();
-    return ParseReply("POST " + path, Perform(Cfg().np_base, path, &text, timeout_ms), out, error);
+    return Exchange("POST " + path, path, &text, timeout_ms, out, error);
 }
 
 bool NpGet(const std::string& path, Json& out, std::string& error, int timeout_ms) {
-    return ParseReply("GET " + path, Perform(Cfg().np_base, path, nullptr, timeout_ms), out, error);
+    return Exchange("GET " + path, path, nullptr, timeout_ms, out, error);
 }
 
 void AddGameHeaders(std::vector<std::pair<std::string, std::string>>& headers) {
@@ -562,6 +581,7 @@ void StunServer(std::string* host, std::uint16_t* port) {
 
 // At context_start, then when the answer is over two minutes old (the keepalive asks every 15 s).
 void MappedRefresh(bool force) {
+    if (TrafficStopped()) return;
     std::lock_guard lk(g_mapped.mu);
     if (!force && g_mapped.asked && NowMs() - g_mapped.at_ms < 120000) return;
     g_mapped.asked = true;
@@ -584,7 +604,7 @@ void MappedRefresh(bool force) {
         }
     }
     if (!ok) {
-        if (!g_mapped.addr.empty()) return; // keep the last answer
+        if (!g_mapped.addr.empty() || TrafficStopped()) return; // keep the last answer
         Log("stun: no answer from %s:%u; the server gets the LAN address only", host.c_str(), sport);
         return;
     }
@@ -739,9 +759,11 @@ int Jitter(int ms) {
 void PollerMain(std::uint64_t generation) {
     const std::string me = OnlineId();
     const auto current = [generation] {
-        return g_pollrun.load() && g_pollgen.load() == generation;
+        return g_pollrun.load() && g_pollgen.load() == generation && !TrafficStopped();
     };
-    int wait_ms = kPollWaitMs; // from the first poll; dropped for a server that does not hold polls
+    // The first poll is short: until the server has answered, its requests go one at a time.
+    // Then the server's WaitMaxMs decides; a server that does not hold polls answers without it.
+    int wait_ms = 0;
     int backoff_ms = 0;
     int pause_ms = 0;
     while (current()) {
@@ -797,7 +819,7 @@ void PollerMain(std::uint64_t generation) {
             if (wait_ms > 0) continue; // the server waited: poll again at once
             pause_ms = 250;            // a server without long polling: the old pacing
         } else if (!current()) {
-            break;
+            break; // stopped, restarted, or the server refused this build
         } else if (Refused()) {
             pause_ms = 60000; // the server refused the sign-in: nothing arrives until it changes
         } else {
@@ -863,6 +885,7 @@ void KeepaliveMain() {
 } // namespace
 
 void PollerStart(std::function<void(const Json&)> handler) {
+    if (TrafficStopped()) return;
     std::lock_guard lk(g_pollmu);
     g_handler = std::move(handler);
     if (g_pollrun.exchange(true)) return;
@@ -881,6 +904,28 @@ void PollerStop() {
     g_pollrun.store(false);
     g_pollcv.notify_all();
 }
+
+namespace {
+// The poller and keepalive end, STUN and the relay stop; NpPost and the game's HTTP to the
+// server fail at once from here on (TrafficStopped).
+void StopTraffic() {
+    PollerStop();
+    std::string stun;
+    std::uint16_t stun_port = 0;
+    if (Cfg().stun != "off") StunServer(&stun, &stun_port);
+    P2pStop({HostOf(Cfg().np_base), HostOf(Cfg().auth_base), stun});
+}
+
+bool SameHost(const char* a, const std::string& b) {
+    return a && !b.empty() && std::strlen(a) == b.size() &&
+           std::equal(b.begin(), b.end(), a, [](char x, char y) {
+               return std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y));
+           });
+}
+bool ServerHost(const char* host) {
+    return SameHost(host, HostOf(Cfg().np_base)) || SameHost(host, HostOf(Cfg().auth_base));
+}
+} // namespace
 
 // ---- game memory: 1.09's addresses (Binary Ninja, image base 0x400000) -------------------------------
 
@@ -965,4 +1010,17 @@ extern "C" bool bbthd_enabled() {
 }
 extern "C" void bbthd_add_game_headers(std::vector<std::pair<std::string, std::string>>* headers) {
     if (headers) BbThd::AddGameHeaders(*headers);
+}
+// A request to the server after it refused this build: the game sees no network instead.
+extern "C" bool bbthd_blocks(const char* host) {
+    return BbThd::Enabled() && BbThd::TrafficStopped() && BbThd::ServerHost(host);
+}
+// The game's own requests are refused the same way: the first one stops the rest.
+extern "C" void bbthd_http_answer(const char* host, int status, const char* body, std::size_t size) {
+    if (!BbThd::Enabled() || status != 401 || !BbThd::ServerHost(host)) return;
+    const std::string text(body ? body : "", body ? size : 0);
+    const BbThd::Json reply = BbThd::Json::parse(text, nullptr, false);
+    std::string reason = BbThd::StrOf(reply, "Message");
+    if (reason.empty()) reason = text.substr(0, 200);
+    if (BbThd::IsClientRefusal(reason)) BbThd::MarkRefused(reason);
 }

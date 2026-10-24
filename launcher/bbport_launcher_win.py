@@ -610,6 +610,8 @@ def thd_call(url, body):
 def thd_sign_in(game_server, on_code, cancelled=lambda: False):
     """Discord sign-in the way bbhost does it: a code to approve on the website. on_code(page,
     code) shows it. Returns (online id, token); raises ValueError."""
+    if thd_refused():
+        raise ValueError(_(*THD_REFUSED_NOTE))
     auth = community_address(game_server)
     start = thd_call(auth + '/auth/device/start',
                      {'DeviceName': f'bbport-jgamrot on {os.environ.get("COMPUTERNAME", "PC")}'})
@@ -662,10 +664,43 @@ def thd_client_refused(reason):
     return 'client is not supported' in reason.casefold()
 
 
+# The CLIENT_VERSION The Hunter's Dream refused. While it is this launcher's, nothing here signs in
+# to it or starts the game on it (PLAY starts offline); a new version tries again once.
+THD_REFUSAL = CONFIG_DIR / 'thd-refusal.json'
+# The game's line for that refusal (gpu/bbnet/thd/thd_session.cpp MarkRefused).
+THD_REFUSED_LINE = 'THD: the server refused this client ('
+THD_REFUSED_NOTE = ("The Hunter's Dream doesn't accept this build; offline play and seamless co-op still work.",
+                    "The Hunter's Dream не принимает эту сборку; офлайн-игра и бесшовный кооператив работают.")
+
+
+def thd_refused():
+    saved = load_json(THD_REFUSAL, {})
+    return isinstance(saved, dict) and saved.get('client') == CLIENT_VERSION
+
+
+def remember_thd_refusal(reason=''):
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        THD_REFUSAL.write_text(json.dumps({'client': CLIENT_VERSION, 'reason': reason, 'when': time.time()}),
+                               encoding='utf-8')
+    except OSError:
+        pass
+
+
+def note_game_output(line):
+    """A line of the game's output; True when it is The Hunter's Dream refusing this build."""
+    if THD_REFUSED_LINE not in line:
+        return False
+    remember_thd_refusal(line.strip())
+    return True
+
+
 def thd_account_check(community, online_id, token):
     """Whether The Hunter's Dream accepts this sign-in from this client: the game's own event
     poll (read-only, no ack), with the headers gpu/bbnet/thd/thd_session.cpp sends. A saved
     token alone says nothing: the server can still refuse the account or this build (HTTP 401)."""
+    if thd_refused():
+        return _(*THD_REFUSED_NOTE)
     if not online_id or not token:
         return _('Not signed in: use "Sign in with Discord".')
     # The game sends at most 16 characters of it (thd_session.cpp, BB_THD_ONLINE_ID).
@@ -689,6 +724,7 @@ def thd_account_check(community, online_id, token):
             reason = ''
         line = _('Sign-in as {0}: refused by the server ({1})').format(online_id, reason or 'HTTP 401')
         if thd_client_refused(reason):
+            remember_thd_refusal(reason)
             line += '\n' + _('The server refuses this build, not the account: signing in again does not help.')
         return line
     except ValueError:
@@ -811,9 +847,9 @@ def game_environment(s):
         if '=' in item:
             key, value = item.split('=', 1)
             env[key] = value
-    # Online only in The Hunter's Dream play mode; seamless co-op sets up its own launch
-    # (bbport_coop.co_op_environment), and the shadNet-server pool is no longer offered.
-    if s.get('online') and play_mode(s) == 'huntersdream':
+    # Online only in The Hunter's Dream play mode, unless it refused this build; seamless co-op sets
+    # up its own launch (bbport_coop.co_op_environment), and the shadNet-server pool is no longer offered.
+    if s.get('online') and play_mode(s) == 'huntersdream' and not thd_refused():
         server = str(s['online_server']).strip() or APP_DEFAULTS['online_server']
         env['BB_ONLINE'] = '1'
         env['BB_SHADNET_SERVER'] = server
@@ -1833,6 +1869,8 @@ class Launcher:
         """The co-op pool choice and The Hunter's Dream's Discord sign-in (BB_HUNTERS_DREAM=0 hides them)."""
         ttk = self.ttk
         self.section(f, _("The Hunter's Dream (test build)"))
+        if thd_refused():
+            self.note(f, _(*THD_REFUSED_NOTE))
         self.row(f, _('Co-op pool'), self.choice(f, 'online_pool', 'app', ONLINE_POOLS),
                  _("The Hunter's Dream signs in with Discord below; the shadNet server uses the account "
                    'fields further down.'))
@@ -2218,8 +2256,9 @@ class Launcher:
             if choice is None:
                 return
             online.set(bool(choice))
+        refused = thd_refused()  # PLAY starts offline instead
         if (online.get() and HUNTERS_DREAM_POOL and self.var('online_pool', 'app').get() == 'huntersdream'
-                and not self.var('thd_token', 'app').get()):
+                and not self.var('thd_token', 'app').get() and not refused):
             self.messagebox.showwarning('Bloodborne', _("The Hunter's Dream: sign in with Discord on the "
                                                         'Online page first.'))
             self.show('online')
@@ -2237,6 +2276,8 @@ class Launcher:
             self.show('game')
             return
         self.set_log('')
+        if refused and online.get() and play_mode(self.app) == 'huntersdream':
+            self.append(_(*THD_REFUSED_NOTE) + ' ' + _('Starting offline.', 'Запуск офлайн.') + '\n')
         try:
             self.process = subprocess.Popen(run_command(), cwd=PORT_DIR, env=game_environment(self.app),
                                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -2265,6 +2306,7 @@ class Launcher:
         for raw in iter(process.stdout.readline, b''):
             text = raw.decode('utf-8', errors='replace')
             self.output.put(text)
+            note_game_output(text)
             if not warned and 'eboot.bin is not the 01.09 build' in text:
                 warned = True
                 self.ui_calls.put(lambda: self.messagebox.showwarning('Bloodborne', _(
@@ -2561,6 +2603,7 @@ def play_without_window(settings):
         for raw in iter(process.stdout.readline, b''):
             text = raw.decode('utf-8', errors='replace')
             log.write(text)
+            note_game_output(text)
             try:
                 sys.stdout.write(text)
             except (OSError, ValueError):

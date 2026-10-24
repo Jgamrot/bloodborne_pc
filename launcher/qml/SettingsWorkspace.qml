@@ -267,13 +267,13 @@ Item {
                     }
                     // The Hunter's Dream (hidden with BB_HUNTERS_DREAM=0): Discord sign-in by a code approved on its website.
                     Note { visible: is("Online", "The Hunter's Dream"); text: "The Hunter's Dream (thehuntersdream.com) is the public online server: messages, bloodstains, summons and invasions with players on bbhost and the other Bloodborne ports. Sign in once with Discord: press the button, sign in with Discord on the page that opens, and approve the code. Then choose \"Online · The Hunter's Dream\" under Play on the Home page. Seamless co-op with your friends is separate: Settings → Co-op." }
-                    Note { visible: is("Online", "The Hunter's Dream"); text: launcher.thdStatus; color: Theme.text; font.pixelSize: 13 }
+                    Note { visible: is("Online", "The Hunter's Dream"); text: launcher.thdStatus; color: launcher.thdRefused ? Theme.warn : Theme.text; font.pixelSize: 13 }
                     Row { visible: is("Online", "The Hunter's Dream") && launcher.thdCode !== ""; spacing: 14
                         Text { text: launcher.thdCode; color: Theme.text; font.family: Theme.sans; font.pixelSize: 30; font.letterSpacing: 4; anchors.verticalCenter: parent.verticalCenter }
                         GlassButton { text: "Copy code"; width: 120; height: 38; anchors.verticalCenter: parent.verticalCenter; onClicked: launcher.thdCopyCode() }
                     }
                     Row { visible: is("Online", "The Hunter's Dream"); spacing: 10
-                        GlassButton { text: launcher.thdBusy ? "Waiting for Discord…" : (launcher.thdSignedIn ? "Sign in again" : "Sign in with Discord"); width: 200; height: 38; enabled: !launcher.thdBusy; onClicked: launcher.thdSignIn() }
+                        GlassButton { text: launcher.thdBusy ? "Waiting for Discord…" : (launcher.thdSignedIn ? "Sign in again" : "Sign in with Discord"); width: 200; height: 38; enabled: !launcher.thdBusy && !launcher.thdRefused; onClicked: launcher.thdSignIn() }
                         GlassButton { visible: launcher.thdBusy; text: "Cancel"; width: 110; height: 38; onClicked: launcher.thdCancel() }
                         GlassButton { visible: !launcher.thdBusy && launcher.thdSignedIn; text: "Sign out"; width: 110; height: 38; onClicked: launcher.thdSignOut() }
                         GlassButton { text: "Test connection"; width: 148; height: 38; onClicked: launcher.testConnection() }

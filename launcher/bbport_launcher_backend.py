@@ -26,6 +26,8 @@ import bbport_startup
 from bbport_pkg_setup import PackageSetupError, install_game
 from bbport_readiness import check_readiness, valid_trophy_key
 
+THD_REFUSED = core.THD_REFUSED_NOTE[0]
+
 
 def choice_rows(options):
     return [{'value': str(value), 'text': label[0]} for value, label in options]
@@ -841,12 +843,14 @@ class LauncherBackend(QObject):
             self._set_notice('Online ID must be your account name, not an email address.')
             return
         if (env is None and self.app.get('online') and core.hunters_dream_selected(self.app)
-                and not self.thdSignedIn):
+                and not self.thdSignedIn and not self.thdRefused):
             self._set_notice("The Hunter's Dream: sign in with Discord on the Online page first.")
             return
         self._write()
         self._log = ''
         self.logChanged.emit()
+        if env is None and self.playMode == 'huntersdream' and self.thdRefused:
+            self._append_log(f'{THD_REFUSED} Starting offline.\n')
         self._game_started = False
         try:
             self.process = subprocess.Popen(core.run_command(), cwd=core.PORT_DIR,
@@ -879,6 +883,8 @@ class LauncherBackend(QObject):
     @Slot(str)
     def _receive_line(self, line):
         self._append_log(line)
+        if core.note_game_output(line):
+            self.thdChanged.emit()
         if 'Entering original x86-64 code' in line:
             if not self._game_started:
                 self._game_started = True
@@ -1439,7 +1445,7 @@ class LauncherBackend(QObject):
     def playModeBlocked(self):
         mode = self.playMode
         if mode == 'huntersdream':
-            return not self.thdSignedIn
+            return not self.thdSignedIn and not self.thdRefused
         if mode == 'coop':
             return not self._coop_ready()
         return False
@@ -1449,6 +1455,8 @@ class LauncherBackend(QObject):
         """One line under PLAY: what it will start."""
         mode = self.playMode
         if mode == 'huntersdream':
+            if self.thdRefused:
+                return f'{THD_REFUSED} PLAY starts offline.'
             if self.thdSignedIn:
                 return f"Online on The Hunter's Dream as {self.app.get('thd_online_id')}: messages, bloodstains and summons with everyone."
             return "Online on The Hunter's Dream: sign in with Discord first (Settings → Online)."
@@ -1485,8 +1493,15 @@ class LauncherBackend(QObject):
     def thdSignedIn(self):
         return bool(self.app.get('thd_token') and self.app.get('thd_online_id'))
 
+    # The Hunter's Dream refused this launcher's build (core.thd_refused): no sign-in, PLAY offline.
+    @Property(bool, notify=thdChanged)
+    def thdRefused(self):
+        return core.HUNTERS_DREAM_POOL and core.thd_refused()
+
     @Property(str, notify=thdChanged)
     def thdStatus(self):
+        if self.thdRefused:
+            return THD_REFUSED
         if self._thd_status:
             return self._thd_status
         if self.thdSignedIn:
@@ -1503,7 +1518,7 @@ class LauncherBackend(QObject):
 
     @Slot()
     def thdSignIn(self):
-        if self._thd_busy:
+        if self._thd_busy or self.thdRefused:
             return
         self._thd_busy, self._thd_cancel, self._thd_code = True, False, ''
         self._thd_status = 'Starting the sign-in…'
@@ -1565,6 +1580,9 @@ class LauncherBackend(QObject):
 
     @Slot()
     def testConnection(self):
+        if self.thdRefused:
+            self.connectionResult.emit(THD_REFUSED)
+            return
         self._set_notice("Testing The Hunter's Dream…")
         online_id, token = (self.app.get('thd_online_id', ''), self.app.get('thd_token', '')) \
             if self.thdSignedIn else ('', '')
@@ -1578,6 +1596,7 @@ class LauncherBackend(QObject):
 
     @Slot(str)
     def _show_connection_result(self, result):
+        self.thdChanged.emit()  # the check may have learned that the server refuses this build
         QMessageBox.information(None, 'Online connection', result)
         self._set_notice('Online connection test finished.')
 
