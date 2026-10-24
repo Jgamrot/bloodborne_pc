@@ -2,8 +2,9 @@
  * engine_hooks.c on a small executable "image": an entry hook sees the arguments and leaves the
  * function's integer and vector arguments intact, a call-site hook replaces the callee and can
  * call the original, a mid-function hook sees and changes the registers while the flags, the
- * vector registers and the red zone survive it, a skippable site switches both ways, and all
- * refuse unexpected bytes without changing anything. */
+ * vector registers and the red zone survive it, a skippable site switches both ways, a data cell
+ * the image loads rip-relative follows writes after the seal, and all refuse unexpected bytes
+ * without changing anything. */
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -14,8 +15,9 @@
 typedef int64_t (BB_GUEST_ABI *IntFn)(int64_t, int64_t);
 typedef double (BB_GUEST_ABI *VecFn)(double, double);
 
-enum { SUM = 0x100, ADD = 0x200, CALLER = 0x300, MID = 0x400, MID_SITE = MID + 16, STEP = 0x500,
-       IMAGE = 0x2000 };
+enum { SUM = 0x100, ADD = 0x200, CALLER = 0x300, MID = 0x400, MID_SITE = MID + 18, STEP = 0x500,
+       LOAD = 0x600, IMAGE = 0x2000 };
+typedef float (BB_GUEST_ABI *LoadFn)(void);
 /* sum(a, b) = a + 2b: push rbp; mov rbp,rsp; lea rax,[rdi+rsi*2]; pop rbp; ret */
 /* The hook API checks sites by length and hash (code_check.h). */
 static BbCode code_of(const unsigned char *code, size_t n) {
@@ -43,6 +45,7 @@ static BB_GUEST_ABI void on_add(double x, double y) {
 /* mid(a, b) = (a + b) + (a < b ? 1 << 32 : 0) + a + b, from r13, the flags of cmp a, b,
  * xmm9 and the red zone [rsp-8] across the hooked lea rax, [r13+rsi] at MID_SITE. */
 static const unsigned char mid_code[] = {
+    0x41, 0x55,                          /* push r13 (callee-saved) */
     0x49, 0x89, 0xfd,                    /* mov r13, rdi */
     0x66, 0x4c, 0x0f, 0x6e, 0xcf,        /* movq xmm9, rdi */
     0x48, 0x89, 0x74, 0x24, 0xf8,        /* mov [rsp-8], rsi */
@@ -55,6 +58,7 @@ static const unsigned char mid_code[] = {
     0x66, 0x4c, 0x0f, 0x7e, 0xca,        /* movq rdx, xmm9 */
     0x48, 0x01, 0xd0,                    /* add rax, rdx */
     0x48, 0x03, 0x44, 0x24, 0xf8,        /* add rax, [rsp-8] */
+    0x41, 0x5d,                          /* pop r13 */
     0xc3,
 };
 /* step() = 1, or 17 with the add: mov eax, 1; add eax, 0x10; ret */
@@ -109,9 +113,21 @@ int main(void) {
     assert(bb_hook_entry(ADD, code_of(add_code, sizeof(add_code)), (void *)on_add) == 0);
     assert(bb_hook_call(CALLER, SUM, (void *)replace_sum) == 0);
     assert(bb_hook_entry(SUM, code_of(sum_code, 8), (void *)on_sum) == -1);  /* already hooked */
-    assert(bb_hook_mid(MID_SITE, code_of(mid_code + 16, 5), on_mid) == 0);
+    assert(bb_hook_mid(MID_SITE, code_of(mid_code + 18, 5), on_mid) == 0);
     BbSkip *add16 = bb_hook_skip(STEP + 5, code_of(step_code + 5, 5));
     assert(add16);
+    /* A cell the image loads rip-relative (movss xmm0, [rip+rel32]; ret), written after the seal. */
+    float *cell = bb_hook_data(sizeof(float)), *second = bb_hook_data(16);
+    assert(cell && second && !((uintptr_t)second & 15) && (unsigned char *)second >= (unsigned char *)(cell + 1));
+    assert(*cell == 0.0f && !bb_hook_data(65));
+    const int64_t to_cell = (int64_t)((uintptr_t)cell - (uintptr_t)(image + LOAD + 8));
+    assert(to_cell >= INT32_MIN && to_cell <= INT32_MAX);
+    const unsigned char load_code[] = {0xf3, 0x0f, 0x10, 0x05};
+    memcpy(image + LOAD, load_code, 4);
+    const int32_t rel32 = (int32_t)to_cell;
+    memcpy(image + LOAD + 4, &rel32, 4);
+    image[LOAD + 8] = 0xc3;
+    assert(!bb_main_frame_available());  /* no frame-time manager in this image */
     bb_hooks_seal();
     DWORD old;
     assert(VirtualProtect(image, IMAGE, PAGE_EXECUTE_READ, &old));
@@ -132,6 +148,10 @@ int main(void) {
     assert(((StepFn)(image + STEP))() == 1);
     bb_skip(add16, 0);
     assert(((StepFn)(image + STEP))() == 17);
+    *cell = 0.25f;
+    assert(((LoadFn)(image + LOAD))() == 0.25f);
+    *(volatile float *)cell = -2.0f;
+    assert(((LoadFn)(image + LOAD))() == -2.0f);
     puts("engine hooks: ok");
     return 0;
 }
