@@ -27,6 +27,14 @@
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #endif
+#ifdef _WIN32
+#include <algorithm>
+#include <cwctype>
+#include <filesystem>
+#include <iterator>
+#include <windows.h>
+#include <tlhelp32.h>
+#endif
 
 namespace Vulkan {
 
@@ -442,6 +450,44 @@ vk::UniqueDebugUtilsMessengerEXT CreateDebugCallback(vk::Instance instance) {
     ASSERT_MSG(messenger_result == vk::Result::eSuccess, "Failed to create debug callback: {}",
                vk::to_string(messenger_result));
     return std::move(messenger);
+}
+
+std::string FindLatencyOwner() {
+#ifdef _WIN32
+    if (GetModuleHandleW(L"sl.interposer.dll")) {
+        return "Streamline (sl.interposer.dll)";
+    }
+    std::wstring exe(MAX_PATH, L'\0');
+    exe.resize(GetModuleFileNameW(nullptr, exe.data(), DWORD(exe.size())));
+    std::error_code ec;
+    if (std::filesystem::exists(std::filesystem::path{exe}.parent_path() / L"OptiScaler.ini", ec)) {
+        return "OptiScaler (OptiScaler.ini)";
+    }
+    // OptiScaler under another name: NGX's entry point in a module that is not NVIDIA's NGX core
+    // (Awakenchan 0.9.37 beta 6, OptiScaler::Detect).
+    const HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) {
+        return {};
+    }
+    std::string owner;
+    MODULEENTRY32W entry{.dwSize = sizeof(MODULEENTRY32W)};
+    for (BOOL ok = Module32FirstW(snapshot, &entry); ok && owner.empty();
+         ok = Module32NextW(snapshot, &entry)) {
+        std::wstring name = entry.szModule;
+        std::ranges::transform(name, name.begin(),
+                               [](wchar_t c) { return wchar_t(std::towlower(c)); });
+        if (name == L"nvngx.dll" || name == L"_nvngx.dll" ||
+            !GetProcAddress(entry.hModule, "NVSDK_NGX_VULKAN_Init_Ext2")) {
+            continue;
+        }
+        std::ranges::transform(name, std::back_inserter(owner),
+                               [](wchar_t c) { return c < 0x80 ? char(c) : '?'; });
+    }
+    CloseHandle(snapshot);
+    return owner;
+#else
+    return {};
+#endif
 }
 
 } // namespace Vulkan

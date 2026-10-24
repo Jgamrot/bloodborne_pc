@@ -223,6 +223,7 @@ page take precedence:
 | Xbox pads: Back + d-pad left/right for the touchpad halves | | `BB_PAD_BACK_COMBO=0` |
 | Skip draws that cannot change anything | | `BB_SKIP_EMPTY_DRAWS=0` |
 | All engine hooks (in-game menus and features) | | `BB_ENGINE_HOOKS=0` |
+| NVIDIA GPUs keep their boost clocks (Reflex Boost hint, not with DLSS Frame Generation) | | `BB_NV_BOOST=0` |
 
 ## Known issues
 
