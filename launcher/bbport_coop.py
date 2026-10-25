@@ -31,10 +31,10 @@ REPO = 'Classmg22/BBSC'
 RELEASES = f'https://github.com/{REPO}/releases'
 DISCORD = 'https://discord.gg/Df7BCmfWdt'
 # (release tag, asset, folder inside the zip): the BBport package of the newest release and the
-# server package (only published with 0.0.1).
+# matching server package.
 PACKAGES = {
-    'client': ('0.0.1_hotfix', 'BBSC-0.0.1-BBport.zip', 'BBSC-0.0.1-BBport'),
-    'server': ('v0.0.1', 'BBSC-0.0.1-Server.zip', 'BBSC-0.0.1-Server'),
+    'client': ('v0.0.2', 'BBSC-0.0.2-BBport.zip', 'BBSC-0.0.2-BBport'),
+    'server': ('v0.0.2', 'BBSC-0.0.2-Server.zip', 'BBSC-0.0.2-Server'),
 }
 SHADNET_PORT, MATCHING_PORT, WEBAPI_PORT, GAME_PORT, RELAY_PORT = 31313, 31314, 31315, 20443, 20444
 INVITE_PREFIX = 'BBCOOP-'
@@ -612,7 +612,7 @@ def active_save_dir(user_dir):
 
 
 def backup_saves(user_dir):
-    """A copy of the saves before every co-op session (BBSC 0.0.1 is a first test)."""
+    """A copy of the saves before every co-op session (BBSC is still a test build)."""
     saves = Path(user_dir) / 'savedata'
     if not saves.is_dir():
         return None
