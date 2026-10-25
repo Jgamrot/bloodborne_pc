@@ -59,7 +59,8 @@ void pinned(uint8_t* out, const Stage& s, uint32_t value) {
 extern "C" void aspect_ratio_bind_image(void* image,uint64_t size) {
     uint32_t w=1920,h=1080;
     if (const char* res=std::getenv("BB_OUTPUT_RES")) std::sscanf(res,"%ux%u",&w,&h);
-    if (!w || !h || uint64_t(w)*9==uint64_t(h)*16) return;
+    // 16:9 to within a pixel of width (1366x768) plays as 16:9 (patches.py is_16_9).
+    if (!w || !h || std::llabs(int64_t(w)*9-int64_t(h)*16)<=9) return;
     if (const char* patched=std::getenv("BB_ASPECT_PATCHED"); patched && !std::strcmp(patched,"1")) {
         std::puts("Aspect: ultrawide output, camera and HUD set by the 21:9 patch (patches.py)"); return;
     }

@@ -222,9 +222,15 @@ int RenderPreset() {
         v.upscaler == UpscalerTaa ? NativeAA : v.preset.load();
 }
 
+// 16:9 to within a pixel of width: 1366x768 plays as 16:9 (patches.py is_16_9).
+static bool Is16By9(int output) {
+    return std::llabs(int64_t(OutputWidths[output]) * 9 - int64_t(OutputHeights[output]) * 16) <= 9;
+}
+
 bool AspectNeedsRestart() {
     const auto& v = Get();
     const int a = v.output_res, b = v.startup_output_res;
+    if (Is16By9(a) && Is16By9(b)) return false;
     return int64_t(OutputWidths[a]) * OutputHeights[b] !=
            int64_t(OutputWidths[b]) * OutputHeights[a];
 }

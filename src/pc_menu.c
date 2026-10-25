@@ -194,8 +194,8 @@ static const Option PRESETS[] = {{0, 117110}, {1, 117111}, {2, 117112}, {3, 1171
 /* The 16:9 outputs, 1920x1200, and the two common ultrawide ones; other outputs show only
  * while chosen (from the launcher), so the list stays as short as the others. Values index
  * BbSettings::OutputWidths. */
-enum { OUTPUTS_ALWAYS = 7 };
-static const Option OUTPUTS[] = {{0, 125100}, {1, 125101}, {2, 125102}, {3, 125103},
+enum { OUTPUTS_ALWAYS = 8 };
+static const Option OUTPUTS[] = {{0, 125100}, {13, 125114}, {1, 125101}, {2, 125102}, {3, 125103},
                                  {12, 125113}, {5, 125104}, {6, 125105}, {10, 125106}, {8, 125107},
                                  {11, 125108}, {7, 125109}};
 static const Option LIVE[] = {{-1, 125110}, {0, 125111}, {1, 125112}};
