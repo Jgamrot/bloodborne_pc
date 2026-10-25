@@ -186,6 +186,17 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
 }
 
 WindowSDL::~WindowSDL() {
+    // Never leave the desktop with a captured mouse or a hidden pointer, also when the game
+    // closes while the camera holds the mouse.
+    if (mouse_captured) {
+        mouse_captured = false;
+        SDL_SetWindowRelativeMouseMode(window, false);
+        SetMouseCaptured(false);
+    }
+    if (cursor_hidden_by_port) {
+        SDL_ShowCursor();
+        cursor_hidden_by_port = false;
+    }
     SDL_DestroyWindow(window);
 }
 
@@ -351,6 +362,16 @@ bool WindowSDL::PollEvents() {
 #endif
         case SDL_EVENT_QUIT:
         case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+            // Release relative mode (its clip) and the pointer before the window goes away.
+            if (mouse_captured) {
+                mouse_captured = false;
+                SDL_SetWindowRelativeMouseMode(window, false);
+                SetMouseCaptured(false);
+            }
+            if (cursor_hidden_by_port) {
+                SDL_ShowCursor();
+                cursor_hidden_by_port = false;
+            }
             is_open = false;
             break;
         default:
