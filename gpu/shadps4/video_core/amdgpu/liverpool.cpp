@@ -494,7 +494,8 @@ Liverpool::Task Liverpool::ProcessCeUpdate(std::span<const u32> ccb) {
         }
         case PM4ItOpcode::WaitOnDeCounterDiff: {
             const auto diff = it_body[0];
-            while ((cblock.de_count - cblock.ce_count) >= diff) {
+            while (cblock.ce_count >= cblock.de_count &&
+                   (cblock.ce_count - cblock.de_count) >= diff) {
                 YIELD_CE();
             }
             break;
@@ -1344,7 +1345,8 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 break;
             }
             case PM4ItOpcode::WaitOnCeCounter: {
-                while (cblock.ce_count <= cblock.de_count && !ce_task.handle.done()) {
+                while (cblock.ce_count <= cblock.de_count && ce_task.handle &&
+                       !ce_task.handle.done()) {
                     RESUME_GFX(ce_task);
                 }
                 break;
