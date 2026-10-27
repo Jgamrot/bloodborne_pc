@@ -256,6 +256,7 @@ class LauncherBackend(QObject):
     gameStarted = Signal()
     gameFinished = Signal(int, bool)  # exit code, whether the game got as far as running
     presetApplied = Signal()
+    _repairDone = Signal(str, str)  # error, notice
 
     def __init__(self, route=None):
         super().__init__()
@@ -280,6 +281,12 @@ class LauncherBackend(QObject):
         self._settings_revision = 0
         self._gpu_status = 'Checking graphics card…'
         self._setup_running = False
+        # Files of the port folder run.py needs but cannot find (#171); Repair puts them back.
+        self._missing = core.missing_port_files()
+        self._repairing = False
+        if self._missing:
+            self._notice = self._incomplete_text()
+        self._repairDone.connect(self._repair_finished)
         self.workerNotice.connect(self._set_notice)
         self.updateAvailable.connect(self._offer_update)
         self.gpuDetected.connect(self._set_gpu_status)
@@ -907,6 +914,11 @@ class LauncherBackend(QObject):
             return
         if self.process:
             return
+        if self._repairing:
+            self._set_notice('Wait for the repair to finish.')
+            return
+        if self._check_port_files():
+            return
         if not core.game_info(self.app.get('game_dir')):
             self._set_notice('Choose the game folder containing eboot.bin first.')
             return
@@ -980,7 +992,7 @@ class LauncherBackend(QObject):
         self.changed.emit()
         if self._game_started or code == 0:
             self._set_notice('Ready to hunt.')
-        else:
+        elif not self._check_port_files():
             self._set_notice(f'The game could not start (exit code {text}). See the log for details.')
         self.gameFinished.emit(code, self._game_started)
 
@@ -1253,6 +1265,81 @@ class LauncherBackend(QObject):
                 self.workerNotice.emit(f'Update failed: {error}')
         self._set_notice(f'Downloading version {version}…')
         threading.Thread(target=work, daemon=True).start()
+
+    # --- Repair: an incomplete port folder ------------------------------------------------------
+
+    def _incomplete_text(self):
+        more = f' and {len(self._missing) - 1} more' if len(self._missing) > 1 else ''
+        return f'This copy of the port is incomplete: {self._missing[0]}{more} missing. Repair puts the files back.'
+
+    def _check_port_files(self):
+        """True (with the notice and the Repair row shown) when port files are missing."""
+        was, self._missing = self._missing, core.missing_port_files()
+        if bool(was) != bool(self._missing):
+            self.changed.emit()
+        if self._missing:
+            self._set_notice(self._incomplete_text())
+        return bool(self._missing)
+
+    @Property(bool, notify=changed)
+    def portIncomplete(self):
+        return bool(self._missing)
+
+    @Property(bool, notify=changed)
+    def repairing(self):
+        return self._repairing
+
+    def _repair_fallback(self, error=None):
+        more = f' and {len(self._missing) - 1} more' if len(self._missing) > 1 else ''
+        text = (f'This copy of the port is incomplete: {self._missing[0]}{more} missing from {core.PORT_DIR}. '
+                f'Download the port again from {core.RELEASES_PAGE} and unpack the whole zip.') if self._missing else ''
+        if error:
+            text = f'Repair failed: {error}. {text}'.strip()
+        self._set_notice(text)
+        webbrowser.open(core.RELEASES_PAGE)
+
+    @Slot()
+    def repairPort(self):
+        if self._repairing:
+            return
+        if self.running:
+            self._set_notice('Close the game before repairing.')
+            return
+        if not core.FROZEN or core.COOP_TEST:
+            self._repair_fallback()
+            return
+        if QMessageBox.question(None, 'Bloodborne', f'Download version {core.VERSION} from GitHub and put its files '
+                                'back? Saves, settings and mods are kept.') != QMessageBox.Yes:
+            return
+        self._repairing = True
+        self.changed.emit()
+
+        def work():
+            try:
+                missing, failed = core.repair_port(lambda percent: self.workerNotice.emit(
+                    f'Downloading version {core.VERSION}… {percent}%'))
+            except OSError as error:
+                self._repairDone.emit(str(error), '')
+                return
+            if missing:
+                self._repairDone.emit('some files could not be restored', '')
+            elif failed:
+                self._repairDone.emit('', 'Repaired, but some files were in use and were not replaced: '
+                                          f'{", ".join(map(str, failed[:3]))}.')
+            else:
+                self._repairDone.emit('', f'Repaired: the files of version {core.VERSION} are back.')
+        self._set_notice(f'Downloading version {core.VERSION}…')
+        threading.Thread(target=work, daemon=True).start()
+
+    @Slot(str, str)
+    def _repair_finished(self, error, notice):
+        self._repairing = False
+        self._missing = core.missing_port_files()
+        self.changed.emit()
+        if error:
+            self._repair_fallback(error)
+        else:
+            self._set_notice(notice)
 
     @Slot()
     def createShortcut(self):

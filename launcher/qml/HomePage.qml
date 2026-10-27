@@ -163,6 +163,14 @@ Item {
             Item { width: 1; height: 22 }
 
             MenuRow {
+                visible: launcher.portIncomplete
+                width: parent.width; icon: "update"; selected: true
+                label: "Some port files are missing"; value: launcher.repairing ? "Repairing…" : "Repair"; valueColor: Theme.text
+                onClicked: launcher.repairPort()
+            }
+            Item { visible: launcher.portIncomplete; width: 1; height: 12 }
+
+            MenuRow {
                 visible: launcher.hasUpdate
                 width: parent.width; icon: "update"; selected: true
                 label: "A new version is ready"; value: "Install"; valueColor: Theme.text
