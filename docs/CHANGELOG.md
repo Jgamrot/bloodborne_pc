@@ -4,6 +4,70 @@ Windows releases of this fork, newest first. Each is on the
 [releases page](https://github.com/Jgamrot/bloodborne_pc/releases) as `bbport-windows.zip`.
 Planned work is in [ROADMAP.md](ROADMAP.md).
 
+## 2.3
+
+Thirty-four community pull requests (most from xiaodoudou) and fixes for the newer issues:
+the NVIDIA device losses, Ebrietas' particles, old CPUs, key bindings and Xbox pads.
+
+**Crashes and the GPU**
+
+- **NVIDIA "GPU device lost (WriteInvalid at 0x0)"** (#92, #130, #16, #145, #185, #212): a vertex
+  shader is reused only with the same bindings (#157; pipelines are rebuilt once, so the first
+  run stutters more), and a zeroed vertex input reads as zero through a valid format (#209).
+  Swapchain recreation no longer races the recording threads (#160); empty images are skipped
+  when tiling.
+- **Ebrietas' particles** (#154, #227): effects count on whole 1/30 s steps above 30 FPS and move
+  every frame (#179), so her rock effect ends; the game's GX buffer pool is 288 MiB instead of 160
+  (`BB_GX_REGION_MB`, after Awakenchan 0.9.37).
+- **Black blotches with SSR, white screens** (#200): shaders follow the PS4 GPU's rules for NaN and
+  infinity (#204).
+- **Other guards:** indirect draws with implausible counts are skipped (#173); the blur kernel's
+  sample count stays at 3 or more (exit 0xa0020007, #175); render jobs give their slot back and get
+  a 512 MiB cache (Laurence's cinematic, character creation, #178, #224); vertex buffer tables below
+  64 KiB skip the draw (#191); stale prepared vertex inputs are read again (#192); four shadPS4
+  renderer fixes (#176) and CE/DE counter waits (#177); pages the game keeps rewriting stay
+  writable (#194); NVIDIA keeps its clocks up between frames (#193, `BB_NV_BOOST=0`).
+- **FSR 4 on AMD** (#151): after a device loss with FSR 4, the next start uses FSR 3.1 and says why;
+  choosing FSR 4 again retries it.
+- **Shader cache** written by another build is rebuilt by itself (#190); pipelines without a pixel
+  shader build their own fragment state (#189); the warm-up log says why stored pipelines were
+  skipped (#188).
+
+**Frame rate**
+
+- **FPS presets below their target** play as the lower rate would: 111 per-frame constants follow
+  the frame time (#201). Cloth at 60 and 90 FPS (#162) and grass and tree wind (#164) move at 30's
+  pace.
+
+**Old CPUs** (Intel 3rd generation and older, #168): the last 193 short instructions are translated
+  too (#197), so nothing runs as the wrong instruction.
+
+**Controls**
+
+- **Key bindings page** (mdi0exe, #186): up to three bindings per action and key combinations, in
+  *Settings → Controls → Key bindings*.
+- **Walk on the keyboard** (#205, #88) pushes the stick 0.6 of the way, enough to walk.
+- **Xbox pads** (#182): a small stick dead zone and no false centre at connect; `BB_PAD_VIBRATION_LOG=1`
+  logs rumble requests (#213).
+- **Overlay shortcut** (#184): *L3 + R3 opens the in-game menu* can be turned off (Insert still works);
+  **Xbox View** can open Personal Effects (#228).
+- **Hunter's Atlas** (#207): travel only works from the quick menu's Map; the dialog now says so.
+- **Pointer after a screenshot tool** (WENlink106795, #215, #214) is no longer left hidden.
+- **Button prompts without a Nexus download** (#202): choosing Xbox or Keyboard writes Kenney's
+  Input Prompts (CC0) into a copy of your own `menu/common.tpf.dcx`.
+
+**Launcher and online**
+
+- **The Hunter's Dream is off for now** (#199): its server refuses this port's client (#10, #69,
+  #152, #180, #226); a refused client stops talking to it (#198). Offline play and seamless co-op
+  work as before. Online cheats, the free camera and the debug menu are off (#172).
+- **Seamless co-op uses BBSC 0.0.2** (RomankinRoma, #219; #208, #217).
+- **Repair** downloads this version's files when some are missing (#196, #171); Windows status
+  codes reach you as hex with a hint instead of "exit code -1" (#167, #150, #153).
+- **Hybrid laptops** pick the discrete GPU (mdi0exe, #187); **1366x768** output (#220, #218);
+  certificates Windows trusts are trusted (#174); the in-game save no longer repeats the
+  frame_gen block in bbport.ini (#203).
+
 ## 2.2
 
 DLSS frame generation in the download, the Hunter's Atlas art back in the package, and fixes for
@@ -22,15 +86,6 @@ remappers, Proton and ultrawide monitors.
 - **Ultrawide and high refresh rates** (#141): with the frame rate unlocked, the cap follows the
   monitor the game opens on, not the primary one; after an in-game resolution change and restart,
   the HUD is built for the new aspect ratio.
-## Unreleased
-
-- **Xbox and keyboard prompts without a Nexus download.** Choosing Xbox or Keyboard in the
-  launcher writes Kenney's [Input Prompts](https://kenney.nl/assets/input-prompts) (CC0) into a
-  copy of your own `menu/common.tpf.dcx` in the mods folder: the 20 button glyphs and the HUD's
-  Circle, Cross and L3. Only those textures change, so the port still ships nothing from the
-  game. The keyboard images show the keys Keyboard binds (Space for L3). Prompt mods added by
-  earlier launchers (PCBButtons, Dommo's Xbox prompts) are switched off when you choose again.
-
 ## 2.1
 
 Fixes ported from Supermedo's and Awakenchan's ports for open issues, four community pull
