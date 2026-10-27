@@ -233,6 +233,7 @@ page take precedence:
 | Failed render jobs give their slot back (Laurence's cinematic above 30 FPS) | | `BB_JOB_SLOT_FIX=0` |
 | Render resource cache in 512 MiB of the port's memory (the game's: 160 MiB) | | `BB_RENDER_RESOURCE_CACHE_MB=160` keeps the game's |
 | Shader cache written by another build: its shaders are rebuilt | | `BB_SHADER_BUILD_CHECK=0` |
+| Skip draws whose vertex buffer table pointer is null | | `BB_SKIP_NULL_VB_TABLE=0` |
 | All engine hooks (in-game menus and features) | | `BB_ENGINE_HOOKS=0` |
 
 ## Known issues
