@@ -66,7 +66,7 @@ cp -r launcher/art "$dest/launcher/"
 cp -r launcher/qml "$dest/launcher/"
 mkdir -p "$dest/launcher/assets"
 cp launcher/assets/hunter-icon.ico launcher/assets/hunter-icon.png "$dest/launcher/assets/"
-cp -r launcher/assets/ui "$dest/launcher/assets/"
+cp -r launcher/assets/ui launcher/assets/prompts "$dest/launcher/assets/"
 # ShadPs4Plus PKG Extractor 1.1 handles the user's own base and update PKGs from the
 # launcher's Game page. Pin the upstream binary so release builds stay reproducible.
 pkg_archive=out/vendor/ShadPs4Plus-PkgExtractor-1.1-windows.zip
@@ -111,8 +111,8 @@ mkdir -p "$rpc"
 clang++ -std=c++17 -O2 -DUNICODE -D_UNICODE -municode -mwindows -static \
     tools/bloodborne_rpc/main.cpp -o "$rpc/BloodborneRPC.exe" -lkernel32 -luser32
 cp tools/bloodborne_rpc/companion.json tools/bloodborne_rpc/config.json "$rpc/"
-# Button prompt mods (Xbox by Dommo, PCBButtons by JinkiJinn) are edits of the game's own
-# menu/common.tpf.dcx, so they are not shipped: the launcher adds the player's own Nexus download.
+# Button prompts ship as Kenney's CC0 images only (launcher/assets/prompts); the launcher writes
+# them into the player's own menu/common.tpf.dcx.
 # Legacy CPU (Intel 3rd generation and older): the translation plan scripts/cpu_compat.py applies.
 mkdir -p "$dest/tools" && cp tools/legacy-cpu-plan.json "$dest/tools/"
 cp run.py LICENSE README.md packaging/windows/README-Windows.txt "$dest/"
@@ -155,6 +155,7 @@ mkdir -p "$dest/licenses"
 cp gpu/third_party/wepoll/LICENSE "$dest/licenses/wepoll-LICENSE.txt"
 cp gpu/third_party/httplib/LICENSE "$dest/licenses/cpp-httplib-LICENSE.txt"
 cp packaging/windows/licenses/*.txt "$dest/licenses/"
+cp tools/prompts/kenney/License.txt "$dest/licenses/kenney-input-prompts-CC0.txt"
 # Where The Hunter's Dream backend comes from (Awaken's port of bbhost's network code, GPL-3.0).
 cp gpu/bbnet/THD-PORT.md "$dest/licenses/online-code-NOTICE.md"
 cp gpu/bbnet/SHADNET-PORT.md "$dest/licenses/shadps4-network-NOTICE.md"

@@ -320,7 +320,7 @@ Item {
                             delegate: GlassButton { text: modelData; width: 124; height: 38; highlighted: launcher.promptChoice === modelData; onClicked: launcher.setPrompt(modelData) }
                         }
                     }
-                    Note { visible: is("Controls", "Button prompts"); text: "Which buttons the game shows, from the next start. Xbox (by Dommo) and Keyboard (PCBButtons by JinkiJinn) are mods from Nexus Mods, not part of the launcher: the first time you choose one, its Nexus page opens and you pick the file you downloaded (.zip, .7z or .rar). Keyboard also binds the keys its images show: E interact, Left Shift dodge, R blood vial, Q item, F transform, mouse buttons to attack." }
+                    Note { visible: is("Controls", "Button prompts"); text: "Which buttons the game shows, from the next start. Xbox and Keyboard use Kenney's Input Prompts (CC0), added to your game's menu file the first time you choose one. Keyboard also binds the keys its images show: E interact, Left Shift dodge, R blood vial, Q item, F transform, mouse buttons to attack." }
                     Row { visible: is("Mods & Patches", "Hunter's Atlas (map)"); spacing: 12
                         GlassButton { text: "Prepare maps"; width: 160; height: 38; onClicked: launcher.prepareAtlas() }
                         Note { text: launcher.atlasStatus; anchors.verticalCenter: parent.verticalCenter; width: 420 }

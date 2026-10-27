@@ -338,7 +338,7 @@ static BB_GUEST_ABI void replace_glyph(BbRegs *regs) {
     }
 }
 
-/* The keys PCBButtons' images show (launcher KEYBOARD_PROMPT_LAYOUT): with those images in place
+/* The keys the keyboard prompt images show (launcher KEYBOARD_PROMPT_LAYOUT): with those images in place
  * and these bindings, the game's own glyphs are already right. Mouse buttons 1..3. */
 static const struct { int action, key_or_mouse; const char *key; } IMAGE_LAYOUT[] = {
     {BIND_INTERACT, 0, "E"}, {BIND_ROLL, 0, "Left Shift"}, {BIND_BLOOD_VIAL, 0, "R"},

@@ -22,6 +22,14 @@ remappers, Proton and ultrawide monitors.
 - **Ultrawide and high refresh rates** (#141): with the frame rate unlocked, the cap follows the
   monitor the game opens on, not the primary one; after an in-game resolution change and restart,
   the HUD is built for the new aspect ratio.
+## Unreleased
+
+- **Xbox and keyboard prompts without a Nexus download.** Choosing Xbox or Keyboard in the
+  launcher writes Kenney's [Input Prompts](https://kenney.nl/assets/input-prompts) (CC0) into a
+  copy of your own `menu/common.tpf.dcx` in the mods folder: the 20 button glyphs and the HUD's
+  Circle, Cross and L3. Only those textures change, so the port still ships nothing from the
+  game. The keyboard images show the keys Keyboard binds (Space for L3). Prompt mods added by
+  earlier launchers (PCBButtons, Dommo's Xbox prompts) are switched off when you choose again.
 
 ## 2.1
 

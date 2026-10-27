@@ -175,13 +175,10 @@ starts. Files that can't be read are listed in `user\last_run.log`.
 
 ## Keyboard button prompts
 
-Choose **Keyboard** in the launcher (**Settings > Controls**). The key images are
-[PCBButtons](https://www.nexusmods.com/bloodborne/mods/460) by **JinkiJinn**. They are an edit
-of the game's own menu file, so the port does not include them: the first time you choose
-Keyboard, the mod's Nexus page opens; download it and pick the downloaded file (.zip, .7z or
-.rar) in the dialog. Xbox prompts work the same way, from Dommo's
-[Xbox (and switch) UI for Bloodborne](https://www.nexusmods.com/bloodborne/mods/30) (if the
-download has several styles, unpack it and pick the `common.tpf.dcx` of the one you want).
+Choose **Keyboard** in the launcher (**Settings > Controls**). The key images are Kenney's
+[Input Prompts](https://kenney.nl/assets/input-prompts) (CC0): the first time you choose
+Keyboard, the launcher writes them into a copy of your game's `menu/common.tpf.dcx` in the
+mods folder, so nothing from the game ships with the port. Xbox prompts work the same way.
 Choosing Keyboard also sets your
 keys to the ones the images show: E interact, Left Shift dodge, R blood vial, Q item,
 F transform, left / right / middle mouse for attack / firearm / lock-on, Left Ctrl + left mouse
@@ -306,9 +303,8 @@ For testing the legacy CPU translations only, not for play:
   (DLC), DarkSpartan, gtggdd4mzb-source and yumlevi, andrecabralgit, noatdk, FIocker (including
   the English menu), jpramosjp and gStone.
 - The mouse camera by imedved (Nexus Mods), ported by mcrib884 and Jhony-Jhansen.
-- Xbox prompts by **Dommo**, from [Xbox (and switch) UI for Bloodborne](https://www.nexusmods.com/bloodborne/mods/30),
-  and keyboard prompts by **JinkiJinn**, from [PCBButtons](https://www.nexusmods.com/bloodborne/mods/460):
-  supported by the launcher, downloaded by each player from Nexus Mods.
+- Xbox and keyboard prompt images from [Input Prompts](https://kenney.nl/assets/input-prompts)
+  by **Kenney** (CC0).
 - The respawn fix after [AwesomeObserver's Windows work](https://github.com/AwesomeObserver/bloodborne_pc/blob/windows/docs/respawn-loading-windows.md).
 - [ShadPs4Plus PKG Extractor 1.1](https://github.com/AzaharPlus/shadPS4Plus) by AzaharPlus
   (GPL-2.0), included for installing your dump.
