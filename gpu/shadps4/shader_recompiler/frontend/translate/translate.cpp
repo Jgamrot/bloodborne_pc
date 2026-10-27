@@ -1181,6 +1181,12 @@ void Translator::EmitFetch(const GcnInst& inst) {
 
         // Read the V# of the attribute to figure out component number and type.
         const auto buffer = attrib.GetSharp(info);
+        if (IsNullVertexInput(buffer)) {
+            for (u32 i = 0; i < 4; i++) {
+                ir.SetVectorReg(dst_reg++, ir.Imm32(0.f));
+            }
+            continue;
+        }
         const auto values =
             ir.CompositeConstruct(ir.GetAttribute(attr, 0), ir.GetAttribute(attr, 1),
                                   ir.GetAttribute(attr, 2), ir.GetAttribute(attr, 3));

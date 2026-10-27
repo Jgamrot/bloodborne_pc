@@ -338,15 +338,15 @@ void EmitContext::DefineInputs() {
         }
         for (const auto& attrib : fetch_shader->attributes) {
             ASSERT(attrib.semantic < IR::NumParams);
-            const auto sharp = attrib.GetSharp(info);
-            const Id type{GetAttributeType(*this, sharp.GetNumberFmt())[4]};
+            const auto num_format = Gcn::GetVertexInputFormat(attrib.GetSharp(info)).num_format;
+            const Id type{GetAttributeType(*this, num_format)[4]};
             Id id{DefineInput(type, attrib.semantic)};
             if (attrib.GetStepRate() != Gcn::VertexAttribute::InstanceIdType::None) {
                 Name(id, fmt::format("vs_instance_attr{}", attrib.semantic));
             } else {
                 Name(id, fmt::format("vs_in_attr{}", attrib.semantic));
             }
-            input_params[attrib.semantic] = GetAttributeInfo(sharp.GetNumberFmt(), id, 4, false);
+            input_params[attrib.semantic] = GetAttributeInfo(num_format, id, 4, false);
         }
         break;
     }

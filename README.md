@@ -236,6 +236,7 @@ page take precedence:
 | Render resource cache in 512 MiB of the port's memory (the game's: 160 MiB) | | `BB_RENDER_RESOURCE_CACHE_MB=160` keeps the game's |
 | Shader cache written by another build: its shaders are rebuilt | | `BB_SHADER_BUILD_CHECK=0` |
 | Skip draws whose vertex buffer table pointer is null | | `BB_SKIP_NULL_VB_TABLE=0` |
+| Zeroed vertex buffer descriptors read as zero (a valid vertex format) | | `BB_NULL_VERTEX_INPUT=0` |
 | All engine hooks (in-game menus and features) | | `BB_ENGINE_HOOKS=0` |
 | NVIDIA GPUs keep their boost clocks (Reflex Boost hint, not with DLSS Frame Generation) | | `BB_NV_BOOST=0` |
 | Hot pages: memory the game rewrites before almost every use stays writable and is uploaded on each use (at most 8 MiB) | | `BB_HOT_PAGES=0` off, `=1` the older rule (no size limit) |
