@@ -819,8 +819,16 @@ void Draw() {
             dialog->AddText(font,19*scale,point(20,13),paper,"Travel to lamp");
             dialog->AddLine(point(20,43),point(330,43),rule,scale);
             const auto& d=destinations[travel_dialog];
-            const bool ready=!cancel_dialog&&d.available&&BbMapFeatures::TravelEnabled()&&runtime_atlas_travel_supported();
-            std::string message=ready?"Travel to "+d.name+"?":"This lamp is currently unavailable.";
+            // Travel starts only over the game's quick menu (runtime_atlas_travel_request): a map
+            // opened with its key during play showed Travel and then refused it as "the
+            // destination changed" (#207), so say where travel works instead.
+            BbMapMenu travel_menu{};
+            const bool from_menu=runtime_map_menu_state(&travel_menu)&&travel_menu.top_level;
+            const bool lamp_ok=d.available&&BbMapFeatures::TravelEnabled()&&runtime_atlas_travel_supported();
+            const bool ready=!cancel_dialog&&lamp_ok&&from_menu;
+            std::string message=ready?"Travel to "+d.name+"?":lamp_ok?
+                "Travel works from the game menu: press "+std::string(controller?"Options / Menu":"Esc")+", then choose Map.":
+                "This lamp is currently unavailable.";
             dialog->AddText(font,17*scale,point(20,57),paper,message.c_str(),nullptr,310*scale);
             auto button=[&](const char* id,const char* text,float x,bool enabled){
                 ImGui::SetCursorScreenPos(point(x,116));ImGui::BeginDisabled(!enabled);
