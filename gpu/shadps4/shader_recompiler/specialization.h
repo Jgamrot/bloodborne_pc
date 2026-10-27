@@ -206,7 +206,11 @@ struct StageSpecialization {
 
     /// bbport (BB_PERM_DEBUG): the first check of operator== that fails, or null when equal.
     [[nodiscard]] const char* Mismatch(const StageSpecialization& other) const {
-        if (!Valid()) return "invalid";
+        if (!Valid() || !other.Valid()) return "invalid";
+        if (buffers.size() != other.buffers.size() || images.size() != other.images.size() ||
+            samplers.size() != other.samplers.size()) {
+            return "counts";
+        }
         if (vs_attribs != other.vs_attribs) return "vs_attribs";
         if (runtime_info != other.runtime_info) {
             const auto& a = runtime_info;
@@ -239,7 +243,10 @@ struct StageSpecialization {
         }
         if (fetch_shader_data != other.fetch_shader_data) return "fetch_shader_data";
         if (fmasks != other.fmasks) return "fmasks";
-        if (bitset.none() && other.bitset.none()) return nullptr;
+        if (bitset.none() && other.bitset.none() && buffers.empty() && images.empty() &&
+            samplers.empty() && fmasks.empty()) {
+            return nullptr;
+        }
         if (start != other.start) return "start";
         u32 binding{};
         for (u32 i = 0; i < buffers.size(); i++) {
@@ -255,7 +262,8 @@ struct StageSpecialization {
     }
 
     bool operator==(const StageSpecialization& other) const {
-        if (!Valid()) {
+        if (!Valid() || !other.Valid() || buffers.size() != other.buffers.size() ||
+            images.size() != other.images.size() || samplers.size() != other.samplers.size()) {
             return false;
         }
 
@@ -279,7 +287,9 @@ struct StageSpecialization {
         // bindings still may change as they depend on previously processed FS. The check below
         // handles this case and prevents generation of redundant permutations. This is also safe
         // for other types of shaders with no bindings.
-        if (bitset.none() && other.bitset.none()) {
+        // bbport: the engine's own buffers have no sharp (not in `bitset`) but bind from `start`.
+        if (bitset.none() && other.bitset.none() && buffers.empty() && images.empty() &&
+            samplers.empty() && fmasks.empty()) {
             return true;
         }
 
