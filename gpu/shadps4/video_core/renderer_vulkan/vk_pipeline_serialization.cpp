@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: Copyright 2025-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <array>
 #include <chrono>
 #include <cstdio>
 #include <stdexcept>
+#include <string>
 #include "common/serdes.h"
 #include "core/emulator_settings.h"
 #include "shader_recompiler/frontend/fetch_shader.h"
@@ -30,6 +32,37 @@ namespace Vulkan {
 // bbport shader pre-build: permutations the warm-up translated from the game files this start,
 // and those it could not (their pipelines compile when first drawn, as before).
 static u32 prebuild_translated = 0, prebuild_failed = 0, prebuild_relaid = 0;
+
+// bbport: why the warm-up left a stored pipeline out, counted for its summary.
+enum class WarmUpSkip : u8 {
+    Motion,
+    KeyVersion,
+    MissingShader,
+    StaleShader,
+    NoSpirv,
+    BindingStart,
+    Conflict,
+    Refused,
+    Damaged,
+    Other,
+    Count,
+};
+static constexpr std::array<const char*, size_t(WarmUpSkip::Count)> WarmUpSkipNames = {
+    "motion vectors (built at first use on purpose)",
+    "key from another version",
+    "missing shader record",
+    "shader record from another version",
+    "no SPIR-V",
+    "binding starts don't match",
+    "permutation index conflict",
+    "refused by the driver",
+    "damaged record",
+    "other",
+};
+static WarmUpSkip warmup_skip = WarmUpSkip::Other;
+// Where the stage LoadPipelineStage loaded last starts its bindings, and how many it has.
+static Shader::Backend::Bindings stage_start{}, stage_count{};
+static u32 built_with_mismatched_starts = 0;
 
 void RegisterPipelineData(const ComputePipelineKey& key,
                           ComputePipeline::SerializationSupport& sdata) {
@@ -177,6 +210,7 @@ bool PipelineCache::LoadComputePipeline(Serialization::Archive& ar) {
     Storage::DataBase::Instance().Load(Storage::BlobType::ShaderMeta,
                                        fmt::format("{:#018x}", compute_key.value), meta_blob);
     if (meta_blob.empty()) {
+        warmup_skip = WarmUpSkip::MissingShader;
         return false;
     }
 
@@ -200,6 +234,7 @@ bool PipelineCache::LoadComputePipeline(Serialization::Archive& ar) {
     // that stopped on it) stopped every start here. It is compiled again when the game uses it.
     if (!it.value()->IsValid()) {
         compute_pipelines.erase(compute_key);
+        warmup_skip = WarmUpSkip::Refused;
         return false;
     }
     return true;
@@ -259,12 +294,17 @@ bool PipelineCache::LoadGraphicsPipeline(Serialization::Archive& ar) {
     // (ErrorUnknown: the startup crash), and the ones it accepted were registered under the
     // motion key without motion output. Built at first use instead, like the vertex shaders.
     if (sel.graphics_key.motion_vectors) {
+        warmup_skip = WarmUpSkip::Motion;
         return false;
     }
 
     GraphicsPipeline::SerializationSupport sdata{};
     sdata.Deserialize(ar);
 
+    // Diagnosis only: each stage's bindings should start where the stages before it end
+    // (fragment first, as RefreshGraphicsStages binds them).
+    Shader::Backend::Bindings expected{};
+    bool starts_differ = false;
     for (int stage_idx = 0; stage_idx < MaxShaderStages; ++stage_idx) {
         const auto& hash = sel.graphics_key.stage_hashes[stage_idx];
         if (!hash) {
@@ -275,6 +315,7 @@ bool PipelineCache::LoadGraphicsPipeline(Serialization::Archive& ar) {
         Storage::DataBase::Instance().Load(Storage::BlobType::ShaderMeta,
                                            fmt::format("{:#018x}", hash), meta_blob);
         if (meta_blob.empty()) {
+            warmup_skip = WarmUpSkip::MissingShader;
             return false;
         }
 
@@ -283,6 +324,10 @@ bool PipelineCache::LoadGraphicsPipeline(Serialization::Archive& ar) {
         if (!LoadPipelineStage(meta_ar, stage_idx)) {
             return false;
         }
+        starts_differ |= stage_start.unified != expected.unified ||
+                         stage_start.buffer != expected.buffer;
+        expected.unified += stage_count.unified;
+        expected.buffer += stage_count.buffer;
     }
 
     const auto [it, is_new] = graphics_pipelines.try_emplace(sel.graphics_key);
@@ -299,8 +344,10 @@ bool PipelineCache::LoadGraphicsPipeline(Serialization::Archive& ar) {
     // bbport: as for compute pipelines, a failed one is left to compile when the game uses it.
     if (!it.value()->IsValid()) {
         graphics_pipelines.erase(sel.graphics_key);
+        warmup_skip = starts_differ ? WarmUpSkip::BindingStart : WarmUpSkip::Refused;
         return false;
     }
+    built_with_mismatched_starts += starts_differ;
     return true;
 }
 
@@ -314,6 +361,10 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage) 
     bool spirv_current = true;
     if (!LoadShaderMeta(ar, program->info, sel.fetch_shader, spec, perm_idx,
                         Prebuild::Available() ? &spirv_current : nullptr)) {
+        warmup_skip = program->info.hw_stage == Shader::HwStage::Vertex &&
+                              spec.runtime_info.hw.vs.motion_vectors
+                          ? WarmUpSkip::Motion
+                          : WarmUpSkip::StaleShader;
         return false;
     }
 
@@ -378,6 +429,7 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage) 
     };
 
     auto it_pgm = program_cache.find(program->info.pgm_hash);
+    warmup_skip = WarmUpSkip::NoSpirv;
     if (it_pgm == program_cache.end()) {
         module = compile();
         if (!module) return false;
@@ -395,6 +447,9 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage) 
                             "Cached permutation {} of {}_{:x} conflicts with index {}, skipping "
                             "preload",
                             perm_idx, program->info.hw_stage, program->info.pgm_hash, idx);
+                // Equal but for the start, which is not compared without guest resources.
+                warmup_skip =
+                    it->spec.start != spec.start ? WarmUpSkip::BindingStart : WarmUpSkip::Conflict;
                 return false;
             }
             module = it->module;
@@ -403,6 +458,9 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage) 
             if (!module) return false;
         }
     }
+    stage_start = spec.start;
+    stage_count = {};
+    (program ? program->info : it_pgm.value()->info).AddBindings(stage_count);
     spec.info = &it_pgm.value()->info;
     it_pgm.value()->InsertPermut(module, std::move(spec), perm_idx);
 
@@ -481,6 +539,7 @@ void PipelineCache::WarmUp() {
 
     u32 num_pipelines{};
     u32 num_total_pipelines{};
+    std::array<u32, size_t(WarmUpSkip::Count)> skipped{};
     // Progress in the window title while the game waits (a first start with a full catalog
     // builds thousands of pipelines).
     const u32 work = Storage::DataBase::Instance().Count(Storage::BlobType::PipelineKey) +
@@ -510,6 +569,7 @@ void PipelineCache::WarmUp() {
                 u32 version{};
                 pldata.Read(version);
                 if (version != Serialization::PipelineKeyVersion) {
+                    ++skipped[size_t(WarmUpSkip::KeyVersion)];
                     return;
                 }
 
@@ -517,6 +577,7 @@ void PipelineCache::WarmUp() {
                 pldata.Read(is_compute);
 
                 bool result{};
+                warmup_skip = WarmUpSkip::Other;
                 if (is_compute) {
                     result = LoadComputePipeline(ar);
                 } else {
@@ -525,8 +586,11 @@ void PipelineCache::WarmUp() {
 
                 if (result) {
                     ++num_pipelines;
+                } else {
+                    ++skipped[size_t(warmup_skip)];
                 }
             } catch (const std::exception&) {
+                ++skipped[size_t(WarmUpSkip::Damaged)];
                 sel.infos.fill(nullptr);
                 sel.modules.fill(nullptr);
                 sel.fetch_shader.reset();
@@ -563,9 +627,19 @@ void PipelineCache::WarmUp() {
                     std::chrono::duration<double>(std::chrono::steady_clock::now() - warmup_start)
                         .count());
     }
-    if (num_total_pipelines > num_pipelines) {
-        LOG_WARNING(Render, "{} stale pipelines were found. Consider re-generating the cache",
-                    num_total_pipelines - num_pipelines);
+    if (num_total_pipelines > num_pipelines || built_with_mismatched_starts) {
+        std::string reasons;
+        for (size_t i = 0; i < skipped.size(); ++i) {
+            if (skipped[i]) {
+                reasons += fmt::format("{}{} {}", reasons.empty() ? "" : ", ", skipped[i],
+                                       WarmUpSkipNames[i]);
+            }
+        }
+        LOG_WARNING(Render,
+                    "{} stale pipelines were found ({}; {} built with binding starts that don't "
+                    "match). Consider re-generating the cache",
+                    num_total_pipelines - num_pipelines, reasons.empty() ? "none" : reasons,
+                    built_with_mismatched_starts);
     }
 
     Storage::DataBase::Instance().FinishPreload();
