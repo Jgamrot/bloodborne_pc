@@ -770,6 +770,8 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
     if (window.GetWidth() != swapchain.GetWidth() || window.GetHeight() != swapchain.GetHeight() ||
         frame_gen != swapchain_frame_gen) {
         swapchain_frame_gen = frame_gen;
+        // Recreate waits for the device idle: no recording thread may submit meanwhile.
+        std::scoped_lock submit_lock{Scheduler::submit_mutex};
         swapchain.Recreate(window.GetWidth(), window.GetHeight());
     }
 
@@ -963,7 +965,10 @@ void Presenter::UpdateFrameGenLimit(bool wanted, double present_ms) {
 
 bool Presenter::PresentImage(Frame* frame, vk::Image image, bool last) {
     if (!swapchain.AcquireNextImage()) {
-        swapchain.Recreate(window.GetWidth(), window.GetHeight());
+        {
+            std::scoped_lock submit_lock{Scheduler::submit_mutex};
+            swapchain.Recreate(window.GetWidth(), window.GetHeight());
+        }
         if (!swapchain.AcquireNextImage()) {
             // User resizes the window too fast and GPU can't keep up. Skip this frame.
             LOG_WARNING(Render_Vulkan, "Skipping frame!");

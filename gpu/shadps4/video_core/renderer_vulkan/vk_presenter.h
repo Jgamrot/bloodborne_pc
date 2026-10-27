@@ -91,7 +91,11 @@ public:
         if (!IsHDRSupported()) {
             return;
         }
-        swapchain.SetHDR(enable);
+        if (swapchain.GetHDR() != enable) {
+            // Recreates the swapchain after a device wait: no submission meanwhile.
+            std::scoped_lock submit_lock{Scheduler::submit_mutex};
+            swapchain.SetHDR(enable);
+        }
         pp_settings.hdr = enable ? 1 : 0;
     }
 
