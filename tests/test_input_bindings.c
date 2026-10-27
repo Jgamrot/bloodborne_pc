@@ -42,7 +42,14 @@ int main(void) {
     memset(keys, 0, sizeof(keys));
     keys[SDL_GetScancodeFromName("W")] = keys[SDL_GetScancodeFromName("D")] = keys[SDL_GetScancodeFromName("Left Alt")] = true;
     bb_bindings_apply(keys, SDL_SCANCODE_COUNT, 0, &o);
-    assert(o.lx > 128 && o.lx < 175 && o.ly < 128 && o.ly > 81);  /* a walk, diagonally */
+    assert(o.lx > 170 && o.lx < 195 && o.ly < 86 && o.ly > 61);  /* a walk, diagonally */
+    press(NULL, 0);
+    memset(keys, 0, sizeof(keys));
+    keys[SDL_GetScancodeFromName("W")] = keys[SDL_GetScancodeFromName("Left Alt")] = true;
+    bb_bindings_apply(keys, SDL_SCANCODE_COUNT, 0, &o);
+    /* A walk forward: past the game's dead zone (a third of a push stood still, #205), short
+     * of a run. */
+    assert(o.lx == 128 && o.ly >= 40 && o.ly <= 64);
     o = press("G", 0);
     assert(o.buttons == 0x100000 && o.touch_side == 0);  /* gestures: the touchpad's left */
     /* Arrows sent without the extended-key flag (AutoHotkey, #105) arrive as the numpad's. */

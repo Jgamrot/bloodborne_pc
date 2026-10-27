@@ -20,7 +20,10 @@ enum {
 /* Menus confirm with Cross and go back with Circle (the Western layout the game runs with). */
 enum { CONFIRM = PAD_CROSS, BACK = PAD_CIRCLE };
 enum { STICK_LOW = 0, STICK_REST = 128, STICK_HIGH = 255 };
-static const float WALK_PUSH = 0.35f; /* a gentle push the game reads as a walk */
+/* A walk's share of a full push. The game's own dead zone swallows a push of about a third (0.35
+ * left the character standing still while Walk was held, #88 / #205); 0.6 walks, as in
+ * LanternEngine's bindings (kWalkPush), and stays below the run. */
+static const float WALK_PUSH = 0.6f;
 
 static const BindInfo INFO[BIND_COUNT] = {
     {"move_forward", "Move Forward", 0, "W", 0},
