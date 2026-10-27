@@ -22,7 +22,7 @@ void SetWindowStatus(const std::string& status); // gpu/shim/window.cpp: the tit
 
 namespace Serialization {
 /* You should increment versions below once corresponding serialization scheme is changed. */
-static constexpr u32 ShaderBinaryVersion = 8u; // bbport: subgroup barriers for shared memory
+static constexpr u32 ShaderBinaryVersion = 10u; // bbport: subgroup barriers for shared memory (8), GCN NaN/Inf rules (9)
 static constexpr u32 ShaderMetaVersion = 8u; // bbport: pre-build (attribute V#s, tess constants)
 static constexpr u32 PipelineKeyVersion = 6u; // bbport: vertex shaders paired by binding start
 } // namespace Serialization
@@ -45,6 +45,7 @@ enum class WarmUpSkip : u8 {
     Conflict,
     Refused,
     Damaged,
+    NoClipRecord,
     Other,
     Count,
 };
@@ -58,6 +59,7 @@ static constexpr std::array<const char*, size_t(WarmUpSkip::Count)> WarmUpSkipNa
     "permutation index conflict",
     "refused by the driver",
     "damaged record",
+    "no pixel shader, saved without its clip distances (built at first use)",
     "other",
 };
 static WarmUpSkip warmup_skip = WarmUpSkip::Other;
@@ -316,6 +318,7 @@ bool PipelineCache::LoadGraphicsPipeline(Serialization::Archive& ar) {
     // draw's registers as saved; a pipeline saved without them is compiled when first drawn.
     if (!sel.graphics_key.stage_hashes[u32(Shader::SwStage::Fragment)]) {
         if (!sdata.clip_distances && profile.needs_clip_distance_emulation) {
+            warmup_skip = WarmUpSkip::NoClipRecord;
             return false;
         }
         auto& fs = sel.runtime_infos[u32(Shader::SwStage::Fragment)];
