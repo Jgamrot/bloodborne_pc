@@ -1788,6 +1788,9 @@ class Launcher:
         control, camera = self.var('cheat_enemy_control', 'ini'), self.var('debug_camera', 'ini')
         control.trace_add('write', lambda *_a: control.get() and camera.set(False))
         camera.trace_add('write', lambda *_a: camera.get() and control.set(False))
+        self.note(f, _("Cheats, the free camera and the debug menu are off when playing online with The "
+                       "Hunter's Dream; seamless co-op keeps them.", 'Читы, свободная камера и меню отладки '
+                       "отключены при игре онлайн через The Hunter's Dream; в бесшовном кооперативе они остаются."))
 
     def build_online(self):
         ttk = self.ttk

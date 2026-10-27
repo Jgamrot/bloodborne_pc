@@ -20,7 +20,7 @@ from patches import (EBOOT_BASE, FIXES, FPS_PRESETS, OUTPUT_SIZE, RESOLUTION_TEM
                      CLOTH_STIFFNESS, CLOTH_LEFT_OUT, CLOTH_SUBSTEPS, CLOTH_CAVES, CAMERA_FIELDS, frame_steps, preset_writes, with_external,
                      CLOTH_STIFFNESS, CLOTH_LEFT_OUT, WIND_STEP, WIND_STEP_LOAD, WIND_FORCE_LOAD, WIND_PACE, CAMERA_FIELDS, frame_steps, preset_writes, with_external,
                      HEAP_PATCH, HEAP_GUARD, pc_heaps_enabled, site_matches,
-                     HASH_GUARDS, guarded_patches)
+                     HASH_GUARDS, guarded_patches, ONLINE_BLOCKED, online_allowed)
 
 XML = ROOT / 'patches/Bloodborne.xml'
 SEGMENTS = [(0, 0x6000000)]
@@ -513,6 +513,33 @@ class SprintFixTests(unittest.TestCase):
             self.assertFalse(sprint_fix_enabled({'sprint_fix': '0'}))
         with mock.patch.dict('os.environ', {'BB_SPRINT_FIX': '0'}):
             self.assertFalse(sprint_fix_enabled({'sprint_fix': '1'}))
+
+
+class OnlineCheatTests(unittest.TestCase):
+    CHEATS = {'cheat_no_death': '1', 'cheat_stealth': '1', 'cheat_silent': '1', 'cheat_rally_no_decay': '1',
+              'debug_menu': '1', 'debug_camera': '1', 'tweak_ragdoll': '1', 'effect_dof': '0'}
+
+    def test_every_cheat_and_debug_patch_is_blocked(self):
+        self.assertEqual(ONLINE_BLOCKED, {'Player No Dead (Read note)', 'Player Stealth (Read note)',
+                                          'Player Silent (Read note)', 'No Rally Decay', 'Enemy Control',
+                                          'Restore Debug Camera', 'Restore Debug Menu (READ NOTES)'})
+        names = {e.get('Name') for e in ET.parse(XML).getroot().iter('Metadata')}
+        self.assertLessEqual(ONLINE_BLOCKED, names)
+
+    def test_offline_and_seamless_coop_keep_them(self):
+        names = effect_patches(self.CHEATS)
+        for env in ({'BB_ONLINE': '0', 'BB_COOP': '0'}, {'BB_ONLINE': '1', 'BB_COOP': '1'}, {'BB_COOP': '1'}):
+            with mock.patch.dict('os.environ', env):
+                self.assertEqual(online_allowed(names), names)
+
+    def test_online_leaves_them_out(self):
+        names = effect_patches(self.CHEATS) + ['Skip Intro', 'Cheat: infinite items']
+        for env in ({'BB_ONLINE': '1'}, {'BB_ONLINE': '1', 'BB_COOP': '0'}):
+            with mock.patch.dict('os.environ', env), redirect_stdout(io.StringIO()) as out:
+                self.assertEqual(online_allowed(names),
+                                 ['Disable DoF', 'DS1-like physics', 'Skip Intro'])
+            self.assertIn('Player No Dead (Read note)', out.getvalue())
+            self.assertIn('Cheat: infinite items', out.getvalue())
 
 
 class DebugPatchTests(unittest.TestCase):

@@ -337,8 +337,29 @@ bool Read(const Values& v, const std::string& k, int& out) {
 }
 } // namespace
 
-// The in-game PC menu (src/pc_menu.c) reads and writes the same settings through these.
+bool Online() {
+    static const bool online = [] {
+        const char* net = std::getenv("BB_ONLINE");
+        const char* coop = std::getenv("BB_COOP");
+        return net && !std::strcmp(net, "1") && !(coop && !std::strcmp(coop, "1"));
+    }();
+    return online;
+}
+
+bool OnlineBlocked(int effect) {
+    const char* key = Effects[effect].key;
+    return Online() && (!std::strncmp(key, "cheat_", 6) || !std::strncmp(key, "debug_", 6));
+}
+
+// The in-game PC menu (src/pc_menu.c) reads and writes the same settings through these. Online,
+// the blocked switches read as off (the live stamina cheats among them); bbport.ini keeps them.
 extern "C" int bbgpu_setting_get(const char* key, int* value) {
+    for (int e = 0; e < EffectCount; ++e) {
+        if (OnlineBlocked(e) && !std::strcmp(key, Effects[e].key)) {
+            *value = 0;
+            return 1;
+        }
+    }
     return Read(Get(), key, *value) ? 1 : 0;
 }
 
@@ -387,6 +408,8 @@ void SetFullscreen(bool on) {
 
 extern "C" void bbgpu_setting_set(const char* key, int value) {
     const std::string k = key;
+    for (int e = 0; e < EffectCount; ++e)
+        if (OnlineBlocked(e) && k == Effects[e].key) return; // stays as bbport.ini has it
     if (k == "fullscreen") {
         SetFullscreen(value != 0);
         return;

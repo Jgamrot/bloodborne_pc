@@ -341,6 +341,9 @@ EFFECTS={
     # parsifal295, Supermedo/bloodborne_pc PR #17.
     'tweak_circle_confirm':(None,'Circle Confirm (Japanese/Asian button layout)'),
 }
+# Left out online (BB_ONLINE=1; not seamless co-op's BB_COOP=1, among players who chose it),
+# whatever bbport.ini, BB_PATCHES or a third-party file asks for; the live stamina cheats are off there too (bbport_settings.cpp OnlineBlocked).
+ONLINE_BLOCKED={EFFECTS[key][1] for key in EFFECTS if key.startswith(('cheat_','debug_'))}
 # model_lod: -2 highest, 0 the game's, 1 lower, 2 lowest.
 MODEL_LOD={'-2':'Model LOD -2 (Highest)','1':'Model LOD 1 (Lower)','2':'Model LOD 2 (Lowest)'}
 
@@ -422,6 +425,19 @@ def validate_patch_requirements(names, game):
                   file=sys.stderr)
             return [n for n in names if n != DEBUG_MENU]
     return names
+
+
+def online():
+    return os.environ.get('BB_ONLINE')=='1' and os.environ.get('BB_COOP')!='1'
+
+
+def online_allowed(names):
+    """`names` without the patches online play leaves out (ONLINE_BLOCKED, or a name with
+    "cheat" in it), when playing online."""
+    if not online(): return names
+    blocked=[n for n in names if n in ONLINE_BLOCKED or 'cheat' in n.lower()]
+    if blocked: print(f'Patches: playing online, left out: {", ".join(blocked)}')
+    return [n for n in names if n not in blocked]
 
 
 def effect_patches(settings):
@@ -897,7 +913,7 @@ def main():
     preset=fps_preset(a.fps,elf,a.xml,a.app_version)
     names=preset+FIXES+[n.strip() for n in a.extra.split(';') if n.strip()]
     names+=[n for n in effect_patches(read_settings(a.settings)) if n not in names]
-    names=validate_patch_requirements(names,a.game_dir)
+    names=validate_patch_requirements(online_allowed(names),a.game_dir)
     names=guarded_patches(names,elf)
     segments=eboot_segments(elf)
     writes=preset_writes(a.xml,preset,a.fps,a.app_version,segments,elf,read_settings(a.settings))
@@ -932,6 +948,8 @@ def main():
     if a.patches_dir:
         # After the built-in ones: an external patch of the same bytes wins.
         selected=external_selection(external_patches(a.patches_dir,a.app_version,a.xml),a.patches_config)
+        allowed=online_allowed([key.split('/',1)[1] for key,_,_ in selected])
+        selected=[item for item in selected if item[0].split('/',1)[1] in allowed]
         writes,replaced=with_external(writes,preset_count,selected,segments)
         if replaced:
             print(f'Patches: external {replaced} replaces the built-in {", ".join(preset)}')
