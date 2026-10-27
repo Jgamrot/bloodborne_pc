@@ -31,6 +31,7 @@
 #include "core/libraries/kernel/process.h"
 #include "core/libraries/libs.h"
 #include "core/libraries/network/http.h"
+#include "windows_trust.h"
 #include "http_error.h"
 
 #if __has_include(<httplib.h>)
@@ -895,6 +896,9 @@ static s32 RunRealHttpRequest(const SendRequestPlan& plan_in, HttpResponse& out_
                          plan.scheme, plan.host);
             }
             cli.enable_server_certificate_verification(verify_server);
+            if (verify_server) {
+                bbnet::TrustWindowsRoots(cli, base_url);
+            }
             if (config_disabled_verify) {
                 LOG_INFO(Lib_Http, "{}://{}: server cert verification disabled by configuration",
                          plan.scheme, plan.host);
