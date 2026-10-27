@@ -436,6 +436,7 @@ private:
     struct IndexBind {
         vk::Buffer handle;
         u64 offset;
+        u32 size;
         vk::IndexType type;
     } index_bind{};
     /// The direct draw whose vertex/index buffers BindResources may resolve early.
