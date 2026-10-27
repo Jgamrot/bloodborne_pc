@@ -235,6 +235,7 @@ page take precedence:
 | Shader cache written by another build: its shaders are rebuilt | | `BB_SHADER_BUILD_CHECK=0` |
 | Skip draws whose vertex buffer table pointer is null | | `BB_SKIP_NULL_VB_TABLE=0` |
 | All engine hooks (in-game menus and features) | | `BB_ENGINE_HOOKS=0` |
+| NVIDIA GPUs keep their boost clocks (Reflex Boost hint, not with DLSS Frame Generation) | | `BB_NV_BOOST=0` |
 
 ## Known issues
 

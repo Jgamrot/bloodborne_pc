@@ -18,8 +18,11 @@
 
 #include <vk_mem_alloc.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
+#include <string>
 
 namespace Vulkan {
 
@@ -422,6 +425,25 @@ bool Instance::CreateDevice() {
                    add_extension(VK_EXT_DEVICE_FAULT_EXTENSION_NAME);
     const bool calibrated_timestamps =
         TRACY_GPU_ENABLED ? add_extension(VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME) : false;
+    // bbport (Awakenchan 0.9.37 beta 6): VK_NV_low_latency2 for its boost hint alone (Swapchain).
+    // Streamline and OptiScaler add and drive the extension themselves when they are loaded.
+    const auto offered = [&](std::string_view extension) {
+        return std::ranges::find(available_extensions, extension) != available_extensions.end();
+    };
+    const char* boost_env = std::getenv("BB_NV_BOOST");
+    if (boost_env && boost_env[0] == '0') {
+        std::printf("GPU: NVIDIA boost clocks off (BB_NV_BOOST=0)\n");
+    } else if (!offered(VK_NV_LOW_LATENCY_2_EXTENSION_NAME) ||
+               !offered(VK_KHR_PRESENT_ID_EXTENSION_NAME)) {
+        std::printf("GPU: NVIDIA boost clocks unavailable (the driver offers no "
+                    "VK_NV_low_latency2)\n");
+    } else if (const std::string owner = FindLatencyOwner(); !owner.empty()) {
+        std::printf("GPU: NVIDIA boost clocks off (%s is loaded and drives low latency itself)\n",
+                    owner.c_str());
+    } else {
+        low_latency_boost = add_extension(VK_KHR_PRESENT_ID_EXTENSION_NAME) &&
+                            add_extension(VK_NV_LOW_LATENCY_2_EXTENSION_NAME);
+    }
 
     const auto family_properties = physical_device.getQueueFamilyProperties();
     if (family_properties.empty()) {

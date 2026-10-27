@@ -117,6 +117,10 @@ private:
     /// Creates the image acquired and present ready semaphores
     void RefreshSemaphores();
 
+    /// bbport: NVIDIA boost clocks (Instance::IsLowLatencyBoostEnabled) set on a new swapchain,
+    /// and again when DLSS Frame Generation is switched.
+    void UpdateLatencyBoost(bool new_swapchain);
+
 private:
     const Instance& instance;
     const Frontend::WindowSDL& window;
@@ -138,8 +142,9 @@ private:
     u32 image_index = 0;
     u32 frame_index = 0;
     bool needs_recreation = true;
-    bool needs_hdr = false;    // The game requested HDR swapchain
-    bool supports_hdr = false; // SC supports HDR output
+    bool needs_hdr = false;     // The game requested HDR swapchain
+    bool supports_hdr = false;  // SC supports HDR output
+    bool latency_boost = false; // bbport: the boost hint set on this swapchain
 };
 
 } // namespace Vulkan

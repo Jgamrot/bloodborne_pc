@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <string>
 #include <fmt/format.h>
 
 #include "common/assert.h"
@@ -26,6 +27,10 @@ vk::UniqueInstance CreateInstance(Frontend::WindowSystemType window_type, bool e
                                   bool enable_crash_diagnostic);
 
 vk::UniqueDebugUtilsMessengerEXT CreateDebugCallback(vk::Instance instance);
+
+/// bbport: a loaded module that drives VK_NV_low_latency2 itself (Streamline, OptiScaler), or
+/// empty.
+std::string FindLatencyOwner();
 
 template <typename T>
 concept VulkanHandleType = vk::isVulkanHandleType<T>::value;
