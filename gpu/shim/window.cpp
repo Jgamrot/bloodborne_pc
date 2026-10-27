@@ -192,6 +192,17 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
 }
 
 WindowSDL::~WindowSDL() {
+    // Never leave the desktop with a captured mouse or a hidden pointer, also when the game
+    // closes while the camera holds the mouse.
+    if (mouse_captured) {
+        mouse_captured = false;
+        SDL_SetWindowRelativeMouseMode(window, false);
+        SetMouseCaptured(false);
+    }
+    if (cursor_hidden_by_port) {
+        SDL_ShowCursor();
+        cursor_hidden_by_port = false;
+    }
     SDL_DestroyWindow(window);
 }
 
@@ -215,6 +226,8 @@ void WindowSDL::UpdateTextTitle() {
     SDL_SetWindowTitle(window, title.c_str());
     BbOverlay::SetTextEntry(text_active, text_prompt, text);
 }
+
+static bool cursor_hidden_by_port = false;
 
 bool WindowSDL::PollEvents() {
     {
@@ -332,6 +345,17 @@ bool WindowSDL::PollEvents() {
             break;
         case SDL_EVENT_WINDOW_FOCUS_LOST:
             mouse_armed = false;
+            // A screenshot tool or another app can take focus while relative mode is on:
+            // release the clip and show the pointer instead of carrying both into the background.
+            if (mouse_captured) {
+                mouse_captured = false;
+                SDL_SetWindowRelativeMouseMode(window, false);
+                SetMouseCaptured(false);
+            }
+            if (cursor_hidden_by_port) {
+                SDL_ShowCursor();
+                cursor_hidden_by_port = false;
+            }
             break;
         case SDL_EVENT_MOUSE_WHEEL:
             NoteMouseWheel(event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -event.wheel.y : event.wheel.y);
@@ -344,6 +368,16 @@ bool WindowSDL::PollEvents() {
 #endif
         case SDL_EVENT_QUIT:
         case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+            // Release relative mode (its clip) and the pointer before the window goes away.
+            if (mouse_captured) {
+                mouse_captured = false;
+                SDL_SetWindowRelativeMouseMode(window, false);
+                SetMouseCaptured(false);
+            }
+            if (cursor_hidden_by_port) {
+                SDL_ShowCursor();
+                cursor_hidden_by_port = false;
+            }
             is_open = false;
             break;
         default:
@@ -354,9 +388,18 @@ bool WindowSDL::PollEvents() {
     // mouse_hide_cursor keeps it hidden over the game and its menus too (mouse-to-pad tools,
     // #88), but not over the guide menu or the map, which are used with the pointer.
     const bool hide_always = BbSettings::Get().mouse_hide_cursor.load() && !BbOverlay::ReleasesMouse();
-    if (const bool show = (!g_pad_in_use && !hide_always) || !focused || text_active;
-        !mouse_captured && SDL_CursorVisible() != show) {
-        show ? SDL_ShowCursor() : SDL_HideCursor();
+    // Track our own hide flag: SDL_CursorVisible() does not mirror the Win32 ShowCursor counter,
+    // so toggling on it could hide the pointer repeatedly and leave the counter negative (the
+    // pointer then stays gone system-wide after a screenshot tool takes focus).
+    const bool show = (!g_pad_in_use && !hide_always) || !focused || text_active;
+    if (!mouse_captured) {
+        if (show && cursor_hidden_by_port) {
+            SDL_ShowCursor();
+            cursor_hidden_by_port = false;
+        } else if (!show && !cursor_hidden_by_port) {
+            SDL_HideCursor();
+            cursor_hidden_by_port = true;
+        }
     }
     return is_open;
 }
