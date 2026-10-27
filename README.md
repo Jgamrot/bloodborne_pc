@@ -237,6 +237,14 @@ page take precedence:
 | All engine hooks (in-game menus and features) | | `BB_ENGINE_HOOKS=0` |
 | NVIDIA GPUs keep their boost clocks (Reflex Boost hint, not with DLSS Frame Generation) | | `BB_NV_BOOST=0` |
 | Hot pages: memory the game rewrites before almost every use stays writable and is uploaded on each use (at most 8 MiB) | | `BB_HOT_PAGES=0` off, `=1` the older rule (no size limit) |
+| Legacy CPU translations (on by themselves on CPUs without BMI1, LZCNT or MOVBE) | `legacy_cpu=0` or `1` | `BB_LEGACY_CPU=0` or `1` |
+
+For testing the legacy CPU translations only, not for play:
+
+| Test | Override |
+|---|---|
+| Leave the short instructions untranslated, as in 2.1 (135 LZCNT/TZCNT, 58 MOVBE) | `BB_LEGACY_CPU_SHORT_SITES=0` |
+| Run untranslated LZCNT/TZCNT as BSR/BSF, as an Ivy Bridge CPU does, on a newer CPU (with `BB_LEGACY_CPU=1`) | `BB_LEGACY_CPU_SIMULATE_BSR=1` |
 
 ## Known issues
 
