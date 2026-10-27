@@ -207,14 +207,25 @@ class HuntersDreamTests(unittest.TestCase):
         self.assertIn('date and time', text)
         self.assertEqual(launcher.connection_error_text(OSError('timed out')), 'timed out')
 
-    def test_pool_is_shown_unless_switched_off(self):
+    def test_pool_is_off_unless_switched_on(self):
+        # The server refuses this port's client (#10).
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop('BB_HUNTERS_DREAM', None)
-            shown = load('bb_launcher_shown', 'launcher/bbport_launcher_win.py')
-        with mock.patch.dict(os.environ, {'BB_HUNTERS_DREAM': '0'}):
             hidden = load('bb_launcher_hidden', 'launcher/bbport_launcher_win.py')
-        self.assertTrue(shown.HUNTERS_DREAM_POOL)
+        with mock.patch.dict(os.environ, {'BB_HUNTERS_DREAM': '1'}):
+            shown = load('bb_launcher_shown', 'launcher/bbport_launcher_win.py')
         self.assertFalse(hidden.HUNTERS_DREAM_POOL)
+        self.assertTrue(shown.HUNTERS_DREAM_POOL)
+
+    def test_a_saved_hunters_dream_mode_plays_offline_while_it_is_off(self):
+        saved = {**self.settings, 'play_mode': 'huntersdream'}
+        with mock.patch.object(launcher, 'HUNTERS_DREAM_POOL', False):
+            self.assertEqual(launcher.play_mode(saved), 'offline')
+            env = launcher.game_environment(saved)
+            self.assertNotIn('BB_NET_BACKEND', env)
+            self.assertNotEqual(env.get('BB_ONLINE'), '1')
+            self.assertEqual(launcher.play_mode({**self.settings, 'play_mode': 'coop'}), 'coop')
+        self.assertEqual(launcher.play_mode(saved), 'huntersdream')
 
     def test_co_op_never_uses_the_hunters_dream(self):
         base = launcher.game_environment(self.settings)

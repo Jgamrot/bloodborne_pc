@@ -129,12 +129,16 @@ Item {
                 id: modes
                 width: parent.width; spacing: 8
                 Repeater {
-                    model: [{mode: "offline", label: "Offline"},
-                            {mode: "huntersdream", label: "Online · The Hunter's Dream"},
-                            {mode: "coop", label: "Online · Seamless co-op"}]
+                    model: launcher.huntersDreamPool
+                           ? [{mode: "offline", label: "Offline"},
+                              {mode: "huntersdream", label: "Online · The Hunter's Dream"},
+                              {mode: "coop", label: "Online · Seamless co-op"}]
+                           : [{mode: "offline", label: "Offline"},
+                              {mode: "coop", label: "Online · Seamless co-op"}]
                     delegate: Rectangle {
                         readonly property bool chosen: launcher.playMode === modelData.mode
-                        width: (modes.width - modes.spacing * 2) / 3; height: 40; radius: Theme.radius
+                        readonly property int shown: launcher.huntersDreamPool ? 3 : 2
+                        width: (modes.width - modes.spacing * (shown - 1)) / shown; height: 40; radius: Theme.radius
                         color: chosen ? Theme.surfaceHover : modeArea.containsMouse ? Theme.surfaceHover : "transparent"
                         border.width: 1; border.color: chosen ? Theme.accent : modeArea.containsMouse ? Theme.lineStrong : Theme.line
                         Text {

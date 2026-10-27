@@ -588,8 +588,9 @@ def server_check(server, webapi, community):
 
 # The Hunter's Dream pool: the engine's own backend for it (BB_NET_BACKEND=thd, bbhost's
 # protocol, Awaken's port as Supermedo took it in): the pool choice and the Discord sign-in on
-# the Online page, as Supermedo shows them since its 1.8.1. BB_HUNTERS_DREAM=0 hides them.
-HUNTERS_DREAM_POOL = os.environ.get('BB_HUNTERS_DREAM') != '0'
+# the Online page, as Supermedo shows them since its 1.8.1. Off for now: the server refuses this
+# port's client (#10); BB_HUNTERS_DREAM=1 shows them again.
+HUNTERS_DREAM_POOL = os.environ.get('BB_HUNTERS_DREAM') == '1'
 ONLINE_POOLS = [('shadnet', ('shadNet server (address below)',)),
                 ('huntersdream', ("The Hunter's Dream (Discord sign-in)",))]
 # Which build a server sees: shadNet's client version and The Hunter's Dream's client field
@@ -605,6 +606,8 @@ PLAY_MODES = ('offline', 'huntersdream', 'coop')
 def play_mode(s):
     """The play mode; older settings (Play online with The Hunter's Dream pool) map to it."""
     mode = s.get('play_mode')
+    if mode == 'huntersdream' and not HUNTERS_DREAM_POOL:
+        return 'offline'
     if mode in PLAY_MODES:
         return mode
     return 'huntersdream' if s.get('online') and s.get('online_pool') == 'huntersdream' else 'offline'

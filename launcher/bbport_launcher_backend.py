@@ -1592,7 +1592,7 @@ class LauncherBackend(QObject):
 
     @Slot(str)
     def setPlayMode(self, mode):
-        if mode not in core.PLAY_MODES:
+        if mode not in core.PLAY_MODES or (mode == 'huntersdream' and not core.HUNTERS_DREAM_POOL):
             return
         self.app['play_mode'] = mode
         # The game's online switch follows: on for The Hunter's Dream; co-op launches turn it on

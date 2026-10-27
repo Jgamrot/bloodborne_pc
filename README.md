@@ -73,6 +73,9 @@ the guide. They are made from your own game files at start, which stay unchanged
   [The Hunter's Dream](https://thehuntersdream.com), and co-op through a shadNet server.
   Cheats, the free camera and the debug menu are off while playing online, whatever the settings say;
   seamless co-op keeps them, as everyone there chose to play together.
+- Online play (beta): seamless co-op on a server one of the players runs, and online through a
+  private shadNet server. [The Hunter's Dream](https://thehuntersdream.com) is off for now: it
+  doesn't accept this build (#10); `BB_HUNTERS_DREAM=1` shows it again.
 - Death respawns skip the game's fixed 12-second wait.
 - Mods and third-party patches, loaded without changing your game files.
 - The Old Hunters on base-game dumps, with a DLC folder setting.
