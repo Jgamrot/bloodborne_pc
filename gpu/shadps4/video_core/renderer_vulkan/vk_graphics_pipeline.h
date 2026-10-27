@@ -78,7 +78,10 @@ public:
         vk::PipelineMultisampleStateCreateInfo multisampling{};
         std::vector<u32> tcs{};
         std::vector<u32> tes{};
-        std::vector<u32> fragment{};
+        std::vector<u32> fragment{}; ///< not saved: made again from the vertex stage's outputs
+        /// bbport: the draw's registers asked for clip distances (ClipDistancesInRegs); unknown
+        /// in pipelines saved before it was.
+        std::optional<bool> clip_distances{};
 
         void Serialize(Serialization::Archive& ar) const;
         bool Deserialize(Serialization::Archive& ar);
