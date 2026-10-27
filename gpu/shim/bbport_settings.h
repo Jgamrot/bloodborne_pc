@@ -108,6 +108,9 @@ struct Values {
     /// The cursor stays hidden over the game window, menus included (#88: for mouse-to-pad
     /// tools); the guide menu, the map and text entry still show it.
     std::atomic<bool> mouse_hide_cursor{false};
+    /// L3 + R3 on a controller opens this menu (Insert always does). Off for mods that put a
+    /// move on L3, such as jumping, where L3 + R3 (lock on) opened it mid-fight (#184).
+    std::atomic<bool> overlay_pad_shortcut{true};
     std::atomic<int> active_render_width{1920}, active_render_height{1080};
     /// Applied at start (patches.py); the menu shows when a restart is needed.
     std::atomic<bool> effects[EffectCount]{};

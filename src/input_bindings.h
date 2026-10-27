@@ -59,6 +59,9 @@ typedef struct {
 void bb_bindings_load(const char *ini_path);
 /* One key_<action>=<value>; false for an unknown action. */
 bool bb_bindings_parse(const char *action, const char *value);
+/* bbport.ini pad_back=effects: an Xbox pad's View / Back button alone opens Personal Effects
+ * (the touchpad's right half) instead of Gestures (#228). 1 for the right half, 0 the left. */
+int bb_bindings_pad_back_side(void);
 int bb_binding_key(int action);   /* SDL scancode of the first plain key binding, 0 when none */
 int bb_binding_mouse(int action); /* 1..7 of the first plain mouse binding, 0 when none */
 /* The bindings of one action: how many are set (up to max_slots). */

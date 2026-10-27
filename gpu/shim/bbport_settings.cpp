@@ -84,6 +84,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.mouse_menu = i != 0;
     } else if (key == "mouse_hide_cursor") {
         v.mouse_hide_cursor = i != 0;
+    } else if (key == "overlay_pad_shortcut") {
+        v.overlay_pad_shortcut = i != 0;
     } else if (key == "model_lod") {
         v.model_lod = std::clamp(i, -2, 2);
     } else if (key == "live_resolution") {
@@ -264,7 +266,7 @@ void Save() {
                                      "model_lod", "output_res", "live_resolution",
                                      "frame_gen", "frame_gen_multiplier", "frame_gen_fit_display",
                                      "mouse_camera", "mouse_sensitivity", "mouse_invert_y", "mouse_menu",
-                                     "mouse_hide_cursor", "mouse_flick_threshold"}) {
+                                     "mouse_hide_cursor", "mouse_flick_threshold", "overlay_pad_shortcut"}) {
                 ours |= key == name;
             }
             for (int e = 0; e < EffectCount; ++e) ours |= key == Effects[e].key;
@@ -296,6 +298,7 @@ void Save() {
                        "mouse_hide_cursor=%d\nmouse_flick_threshold=%d\n",
                  int(v.mouse_camera.load()), v.mouse_sensitivity.load(), int(v.mouse_invert_y.load()),
                  int(v.mouse_menu.load()), int(v.mouse_hide_cursor.load()), v.mouse_flick_threshold.load());
+    std::fprintf(file, "overlay_pad_shortcut=%d\n", int(v.overlay_pad_shortcut.load()));
     // Read by patches.py at start.
     for (int e = 0; e < EffectCount; ++e) {
         std::fprintf(file, "%s=%d\n", Effects[e].key, int(v.effects[e].load()));

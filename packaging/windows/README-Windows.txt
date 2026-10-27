@@ -63,6 +63,9 @@ Starting
   sensitivity (bbport.ini mouse_sensitivity, 10 = 1.0x, 1 to 50). The game's own camera speed
   option changes the controller and the I/J/K/L keys only. "Hide the mouse cursor in the game"
   (mouse_hide_cursor=1) keeps the pointer hidden for mouse-to-controller tools.
+  "L3 + R3 opens the in-game menu" (overlay_pad_shortcut=0 turns it off, for mods that jump
+  with L3) leaves Insert as the way to open it. On an Xbox pad, View / Back is the touchpad: alone it
+  opens Gestures (pad_back=effects: Personal Effects), with the d-pad left or right either one.
 
 Key bindings (bbport.ini)
 - One line per action, key_<action>=<binding>, <binding>, <binding>. A key is named as SDL

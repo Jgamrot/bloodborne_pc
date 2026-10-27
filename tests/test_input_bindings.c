@@ -113,12 +113,14 @@ int main(void) {
     /* An ini file: only key_ lines are read. */
     const char *path = "test_input_bindings.ini";
     FILE *f = fopen(path, "w");
-    fputs("upscaler=dlss\nkey_roll = Left Ctrl\n# key_attack=Mouse2\nmove_smoothing=100\n", f);
+    assert(bb_bindings_pad_back_side() == 0);       /* View / Back: Gestures by default */
+    fputs("upscaler=dlss\nkey_roll = Left Ctrl\n# key_attack=Mouse2\nmove_smoothing=100\npad_back = effects\n", f);
     fclose(f);
     bb_bindings_load(path);
     remove(path);
     o = press("Left Ctrl", 0);
     assert(o.buttons == 0x2000);                    /* roll moved to Left Ctrl, L3 gave it up */
+    assert(bb_bindings_pad_back_side() == 1);       /* pad_back=effects: Personal Effects (#228) */
     assert(bb_binding_mouse(BIND_ATTACK) == 1);     /* the commented line changed nothing */
     press(NULL, 0);
     press("W", 0);

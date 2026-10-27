@@ -64,8 +64,11 @@ static float g_move_step = MOVE_SMOOTHING_DEFAULT, g_move_x, g_move_y;
 static double g_move_angle;
 static bool g_move_active;
 static uint64_t g_move_time;
+static int g_pad_back_side;
 
 static const char *const MOUSE_NAMES[] = {NULL, "mouse1", "mouse2", "mouse3", "mouse4", "mouse5", "wheelup", "wheeldown"};
+
+int bb_bindings_pad_back_side(void) { return g_pad_back_side; }
 
 const BindInfo *bb_bind_info(int action) { return action >= 0 && action < BIND_COUNT ? &INFO[action] : NULL; }
 
@@ -192,6 +195,7 @@ bool bb_bindings_parse(const char *action, const char *value) {
 void bb_bindings_load(const char *ini_path) {
     defaults();
     g_move_step = MOVE_SMOOTHING_DEFAULT;
+    g_pad_back_side = 0;
     FILE *file = ini_path ? fopen(ini_path, "r") : NULL;
     if (!file) return;
     char line[256];
@@ -200,6 +204,13 @@ void bb_bindings_load(const char *ini_path) {
         if (eq && !strncmp(line, "move_smoothing", 14)) {
             const int percent = atoi(eq + 1);
             g_move_step = percent > 0 && percent < 100 ? (float)percent / 100.0f : 1.0f;
+            continue;
+        }
+        if (eq && !strncmp(line, "pad_back", 8)) {
+            char value[32];
+            snprintf(value, sizeof(value), "%s", eq + 1);
+            trim(value);
+            g_pad_back_side = !strcmp(value, "effects");
             continue;
         }
         if (line[0] == '#' || !eq || strncmp(line, "key_", 4)) continue;

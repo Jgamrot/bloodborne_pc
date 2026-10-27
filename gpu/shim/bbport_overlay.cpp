@@ -1870,7 +1870,7 @@ bool HandleEvent(const SDL_Event& event) {
         } else if (button == SDL_GAMEPAD_BUTTON_RIGHT_STICK) {
             r3_down = down;
         }
-        if (down && l3_down && r3_down) {
+        if (down && l3_down && r3_down && BbSettings::Get().overlay_pad_shortcut.load()) {
             SetOpen(!is_open);
             return true;
         }
