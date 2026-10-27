@@ -119,6 +119,25 @@ int main(void) {
     keys[SDL_GetScancodeFromName("W")] = keys[SDL_GetScancodeFromName("A")] = true;
     bb_bindings_apply(keys, SDL_SCANCODE_COUNT, 0, &o);
     assert(o.lx == 1);                              /* move_smoothing=100: off, at once */
+
+    /* Combinations: Shift + left click is the strong attack on its own, and a plain left click
+     * is still the attack - the held combination owns its inputs. */
+    assert(bb_bindings_parse("attack", "Mouse1"));
+    assert(bb_bindings_parse("strong_attack", "Left Shift+Mouse1"));
+    o = press("Left Shift", 1u << 0);
+    assert(o.buttons == 0x200);                     /* R2 only, not R1 as well */
+    o = press(NULL, 1u << 0);
+    assert(o.buttons == 0x800);                     /* left click alone: R1 */
+    /* Up to three bindings on one action, a fourth is dropped. */
+    BindSlot slots[BIND_SLOTS];
+    assert(bb_bindings_parse("interact", "E, F, G"));
+    assert(bb_binding_slots(BIND_INTERACT, slots, BIND_SLOTS) == 3);
+    o = press("F", 0);
+    assert(o.buttons == 0x4000);
+    o = press("G", 0);
+    assert(o.buttons == 0x4000);
+    assert(bb_bindings_parse("interact", "E, F, G, H"));
+    assert(bb_binding_slots(BIND_INTERACT, slots, BIND_SLOTS) == 3);
     puts("input bindings: ok");
     return 0;
 }
