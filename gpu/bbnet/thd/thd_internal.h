@@ -47,6 +47,8 @@ bool SignedIn();
 // The server refused the token (HTTP 401): the poller slows down until the next launch.
 bool Refused();
 void MarkRefused(const std::string& reason);
+// The server refused this build ("client is not supported"): nothing goes to it this session.
+bool TrafficStopped();
 // The name the game and the server know this player by.
 std::string OnlineId();
 
@@ -130,6 +132,9 @@ void P2pPunch(const char* label, std::uint32_t addr, std::uint16_t port, std::ui
               std::uint16_t local_port);
 // The address of this machine that reaches `host` (the LAN address peers on it use).
 std::string DetectLanAddress(const std::string& host);
+// The server's traffic stopped: no STUN, the relay off, datagrams to it and to `hosts` dropped,
+// and the P2P port closed unless the game has sockets on it.
+void P2pStop(const std::vector<std::string>& hosts);
 
 // ---- game memory (1.09 only)
 void SetSignalingGate();

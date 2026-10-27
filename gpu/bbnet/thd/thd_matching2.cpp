@@ -378,7 +378,7 @@ void heartbeat_loop() {
             room_gone_locked(kEvRoomDestroyed, kCauseServerOperation, nullptr, 0, "the server has no room for us");
         }
     }
-    DispatchAfter(5000, Prio::Request, heartbeat_loop);
+    if (!TrafficStopped()) DispatchAfter(5000, Prio::Request, heartbeat_loop);
 }
 
 std::vector<std::uint8_t> b64_decode(const std::string& in) {

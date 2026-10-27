@@ -113,7 +113,7 @@ Item {
                     text: launcher.running ? "Game running" : launcher.setupRunning ? "Installing…" :
                           home.gameBlocked ? "Set up game files" : home.savesBlocked ? "Choose a saves folder" :
                           home.onlineBlocked ? (launcher.playMode === "coop" ? "Set up co-op" : "Sign in with Discord") :
-                          launcher.playMode === "coop" ? "Play co-op" : launcher.playMode === "huntersdream" ? "Play online" : "Play offline"
+                          launcher.playMode === "coop" ? "Play co-op" : launcher.playMode === "huntersdream" && !launcher.thdRefused ? "Play online" : "Play offline"
                     enabled: !launcher.running && !launcher.setupRunning
                     onClicked: home.primaryRequested()
                 }
