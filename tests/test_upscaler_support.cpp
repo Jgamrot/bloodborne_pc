@@ -94,6 +94,40 @@ int main() {
         ConfigureDlssSupport(true, nullptr);
         assert(s.upscaler == UpscalerDlss && s.dlss_supported && !s.dlss_problem.load());
     }
+    // #151: the GPU lost while FSR 4 ran; the next start uses FSR 3.1 and says why, until
+    // FSR 4 is chosen again.
+    {
+        FILE* config = std::fopen(path, "w");
+        assert(config);
+        std::fprintf(config, "upscaler=%s\npreset=3\n", UpscalerName(UpscalerFsr4));
+        std::fclose(config);
+        Load();
+        s.fsr4_problem = nullptr;
+        ConfigureUpscalerSupport(true, true);
+        assert(s.upscaler == UpscalerFsr4 && !s.fsr4_device_lost);
+        s.fsr4_running = false; // lost before FSR 4 recorded a frame: not its doing
+        NoteDeviceLost();
+        Load();
+        assert(!s.fsr4_device_lost);
+        s.fsr4_running = true;
+        NoteDeviceLost();
+        s.fsr4_device_lost = false;
+        Load();
+        assert(s.fsr4_device_lost && s.upscaler == UpscalerFsr4);
+        ConfigureUpscalerSupport(true, true);
+        assert(s.upscaler == UpscalerFsr3 && s.fsr4_problem.load() && !s.fsr4_device_lost);
+        s.upscaler = UpscalerOff;
+        Load(); // the file now says FSR 3.1, its other lines kept
+        assert(s.upscaler == UpscalerFsr3 && !s.fsr4_device_lost && s.preset == Performance);
+        s.upscaler = UpscalerFsr4; // choosing FSR 4 again (here or in the launcher) is the retry
+        Save();
+        Load();
+        assert(s.upscaler == UpscalerFsr4 && !s.fsr4_device_lost);
+        s.fsr4_problem = nullptr;
+        ConfigureUpscalerSupport(true, true);
+        assert(s.upscaler == UpscalerFsr4 && !s.fsr4_problem.load());
+        s.fsr4_running = false;
+    }
     std::remove(path);
     std::puts("Upscaler support: saved choices and FSR 3.1 fallback PASS");
 }

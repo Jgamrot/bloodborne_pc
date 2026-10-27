@@ -316,6 +316,7 @@ bool TemporalUpscaler::OnFrameStart() {
         scheduler.Finish();
         fsr4 = std::make_unique<Fsr4Upscaler>(instance, scheduler);
         if (BbSettings::IsFsr4(upscaler)) BbSettings::Get().fsr4_problem = nullptr;
+        BbSettings::Get().fsr4_running = false;
     }
     if (applied_upscaler != upscaler) fsr4_failed = false; // retry after a menu change
     // Dynamic scene resolution scaling (live preset switching) works on all GPUs.
@@ -2138,6 +2139,7 @@ bool TemporalUpscaler::RecordFsr4(vk::CommandBuffer cmdbuf, Fsr4Upscaler::Image 
         .reset = reset,
         .auto_exposure = settings.fsr4_auto_exposure,
     });
+    BbSettings::Get().fsr4_running = ok;
     // The menu shows the reason; it outlives this frame (FSR 4 keeps its last message).
     static std::string shown;
     const char* problem = fsr4->Problem();

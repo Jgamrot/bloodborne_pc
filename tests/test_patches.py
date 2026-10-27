@@ -18,7 +18,8 @@ from patches import (EBOOT_BASE, FIXES, FPS_PRESETS, OUTPUT_SIZE, RESOLUTION_TEM
                      eboot_is_109, SCALED_BASE, SCALED_FPS, SCALED_VALUES, fps_preset, rate_scaled,
                      eboot_segments, rate_corrections, camera_value, EFFECT_RATE_SITES,
                      CLOTH_STIFFNESS, CLOTH_LEFT_OUT, CLOTH_SUBSTEPS, CLOTH_CAVES, WIND_STEP, WIND_STEP_LOAD, WIND_FORCE_LOAD, WIND_PACE, CAMERA_FIELDS, frame_steps, preset_writes, with_external,
-                     HEAP_PATCH, HEAP_GUARD, pc_heaps_enabled, site_matches,
+                     HEAP_PATCH, HEAP_GUARD, pc_heaps_enabled, site_matches, gx_region_writes,
+                     GX_REGION_GUARD, GX_HEAP_GUARD, GX_HEAP_PS4,
                      HASH_GUARDS, guarded_patches, ONLINE_BLOCKED, online_allowed)
 
 XML = ROOT / 'patches/Bloodborne.xml'
@@ -494,6 +495,58 @@ def fake_elf(vaddr, code):
     struct.pack_into('<HH', header, 0x36, 56, 1)
     struct.pack_into('<IIQQQQQQ', header, 0x40, 1, 5, 0x1000, vaddr, vaddr, len(code), len(code), 0x1000)
     return bytes(header) + code
+
+
+def two_segment_elf(parts):
+    # One PT_LOAD segment per (vaddr, bytes) part.
+    elf = bytearray(0x40 + 56 * len(parts))
+    struct.pack_into('<Q', elf, 0x20, 0x40)
+    struct.pack_into('<HH', elf, 0x36, 56, len(parts))
+    for i, (vaddr, data) in enumerate(parts):
+        struct.pack_into('<IIQQQQQQ', elf, 0x40 + 56 * i, 1, 5, len(elf), vaddr, vaddr, len(data), len(data), 0x1000)
+        elf += data
+    return bytes(elf)
+
+
+class GxRegionTests(unittest.TestCase):
+    # The guards know the game's bytes only by length and hash: stand-in bytes, with guards
+    # made to match them, exercise the same path.
+    REGION = bytes(range(0x30, 0x30 + GX_REGION_GUARD[1]))
+    HEAP = struct.pack('<Q', GX_HEAP_PS4)
+    STANDARD = [(GX_REGION_GUARD[0], REGION), (GX_HEAP_GUARD[0], HEAP + struct.pack('<Q', 0x37600000))]
+
+    def writes(self, parts=None, heaps_written=False, **env):
+        import hashlib
+        check = lambda data: hashlib.sha256(data).hexdigest()[:16]
+        with mock.patch('patches.GX_REGION_GUARD', GX_REGION_GUARD[:2] + (check(self.REGION),)),              mock.patch('patches.GX_HEAP_GUARD', GX_HEAP_GUARD[:2] + (check(self.HEAP),)),              redirect_stdout(io.StringIO()):
+            return gx_region_writes(two_segment_elf(parts or self.STANDARD), heaps_written, env)
+
+    def test_the_region_and_the_heap_grow_together(self):
+        at = GX_REGION_GUARD[0] + GX_REGION_GUARD[1] - 4
+        self.assertEqual(self.writes(), [(at, struct.pack('<I', 256 << 20)),
+                                         (GX_HEAP_GUARD[0], struct.pack('<Q', GX_HEAP_PS4 + (128 << 20)))])
+
+    def test_enlarged_heaps_keep_their_size(self):
+        self.assertEqual(len(self.writes(heaps_written=True)), 1)
+
+    def test_the_switch_sizes_it_within_bounds(self):
+        self.assertEqual(self.writes(BB_GX_REGION_MB='0'), [])
+        self.assertEqual(self.writes(BB_GX_REGION_MB='160'), [])
+        self.assertEqual(self.writes(BB_GX_REGION_MB='224')[0][1], struct.pack('<I', 192 << 20))
+        self.assertEqual(self.writes(BB_GX_REGION_MB='9999')[0][1], struct.pack('<I', 384 << 20))
+
+    def test_a_differing_eboot_is_left_alone(self):
+        other = self.REGION[:-1] + b''
+        self.assertEqual(self.writes([(GX_REGION_GUARD[0], other), self.STANDARD[1]]), [])
+        self.assertEqual(self.writes([self.STANDARD[0], (GX_HEAP_GUARD[0], bytes(16))]), [])
+        self.assertEqual(len(self.writes([self.STANDARD[0], (GX_HEAP_GUARD[0], bytes(16))],
+                                         heaps_written=True)), 1)
+
+    @unittest.skipUnless(GAME_ELF.is_file(), 'needs a prepared 1.09 eboot.elf (BB_TEST_EBOOT_ELF)')
+    def test_guards_match_the_game(self):
+        elf = GAME_ELF.read_bytes()
+        self.assertTrue(site_matches(elf, GX_REGION_GUARD))
+        self.assertTrue(site_matches(elf, GX_HEAP_GUARD))
 
 
 class SprintFixTests(unittest.TestCase):
