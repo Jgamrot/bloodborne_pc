@@ -698,6 +698,14 @@ public:
 
     /// Ends current rendering scope.
     void EndRendering();
+    /// bbport: ends the render pass for work that cannot run inside it; BeginRendering with the
+    /// same state then continues it, loading its attachments instead of clearing them again.
+    void PauseRendering() {
+        if (is_rendering) {
+            EndRendering();
+            resume_rendering = true;
+        }
+    }
 
     /// Sets a function to be called on every scheduler submission.
     void SetSubmitCallback(SubmitFunc&& on_submit) {
@@ -913,6 +921,7 @@ private:
     std::jthread priority_pending_ops_thread;
     RenderState render_state;
     bool is_rendering = false;
+    bool resume_rendering = false; ///< bbport: PauseRendering closed the pass with render_state
     // bbport: threaded recording
     std::unique_ptr<RecordChunk> record_chunk;
     std::vector<std::unique_ptr<RecordChunk>> full_chunks;

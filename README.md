@@ -220,6 +220,7 @@ page take precedence:
 | High-FPS sprint fix | `sprint_fix=0` turns it off | `BB_SPRINT_FIX=0` |
 | Ultrawide camera and centered HUD (non-16:9 outputs) | `output_res=16:9 size` | `BB_ASPECT=0` |
 | Indirect dispatch guard (skips implausible GPU work counts) | | `BB_INDIRECT_GUARD=0` |
+| Indirect draw guard (skips implausible vertex and instance counts) | | `BB_INDIRECT_DRAW_GUARD=0` |
 | Pad stick neutral and travel per controller (clone pads) | | `BB_PAD_CENTER_CAL=0`, `BB_PAD_DEADZONE`, `BB_PAD_CENTER` |
 | Safe saves (write to a copy, then replace) | | `BB_SAFE_SAVES=0` |
 | Xbox pads: Back + d-pad left/right for the touchpad halves | | `BB_PAD_BACK_COMBO=0` |
