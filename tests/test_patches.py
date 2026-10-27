@@ -17,7 +17,7 @@ from patches import (EBOOT_BASE, FIXES, FPS_PRESETS, OUTPUT_SIZE, RESOLUTION_TEM
                      eboot_matches_patches, patch_fingerprint, patch_sites, game_app_version,
                      eboot_is_109, SCALED_BASE, SCALED_FPS, SCALED_VALUES, fps_preset, rate_scaled,
                      eboot_segments, rate_corrections, camera_value, EFFECT_RATE_SITES,
-                     CLOTH_STIFFNESS, CLOTH_LEFT_OUT, CAMERA_FIELDS, frame_steps, preset_writes, with_external,
+                     CLOTH_STIFFNESS, CLOTH_LEFT_OUT, CLOTH_SUBSTEPS, CLOTH_CAVES, CAMERA_FIELDS, frame_steps, preset_writes, with_external,
                      HEAP_PATCH, HEAP_GUARD, pc_heaps_enabled, site_matches,
                      HASH_GUARDS, guarded_patches)
 
@@ -249,6 +249,36 @@ class RateCorrectionTests(unittest.TestCase):
                 self.assertFalse(set(left) & out.keys())
         writes, out = self.corrected(144, env={'BB_CLOTH_FIX': '0'})
         self.assertEqual(dict(out)[CLOTH_STIFFNESS - EBOOT_BASE], dict(writes)[CLOTH_STIFFNESS - EBOOT_BASE])
+
+    @unittest.skipUnless(GAME_ELF.is_file(), 'needs a prepared 1.09 eboot.elf (BB_TEST_EBOOT_ELF)')
+    def test_the_60_90_and_uncapped_lists_get_the_bases_cloth(self):
+        base = dict(compile_patches(XML, [SCALED_BASE], '01.09', SEGMENTS))
+        elf = GAME_ELF.read_bytes()
+        for fps, preset in (('60', ['60 FPS++']), ('90', ['90 FPS++']), ('uncap', ['Uncap FPS++'])):
+            with self.subTest(fps=fps), mock.patch.dict('os.environ', {}, clear=True), \
+                    redirect_stdout(io.StringIO()):
+                out = dict(preset_writes(XML, preset, fps, '01.09', SEGMENTS, elf, {}))
+                self.assertEqual(out[CLOTH_SUBSTEPS - EBOOT_BASE], base[CLOTH_SUBSTEPS - EBOOT_BASE])
+                caves = [o for o in base if CLOTH_CAVES[0] <= o + EBOOT_BASE < CLOTH_CAVES[1]]
+                self.assertEqual(len(caves), 18)
+                self.assertTrue(all(out[o] == base[o] for o in caves))
+                # Uncapped 1, the 60 tuning, until src/cloth_rate.c follows the frame time.
+                stiffness = (60 / int(fps)) ** 2 if fps != 'uncap' else 1.0
+                self.assertEqual(struct.unpack('<4f', out[CLOTH_STIFFNESS - EBOOT_BASE]),
+                                 (struct.unpack('<f', struct.pack('<f', stiffness))[0],) * 4)
+                self.assertFalse(any(lo <= o + EBOOT_BASE < hi for o in out for lo, hi in CLOTH_LEFT_OUT))
+        for fps, preset, env, settings in (('90', ['90 FPS++'], {'BB_CLOTH_FIX': '0'}, {}),
+                                           ('uncap', ['Uncap FPS++'], {'BB_CLOTH_FIX': '0'}, {}),
+                                           ('uncap', ['Uncap FPS++'], {'BB_CLOTH_UNCAPPED': '0'}, {}),
+                                           ('uncap', ['Uncap FPS++'], {}, {'cloth_uncapped': '0'})):
+            with self.subTest(fps=fps, env=env, settings=settings), \
+                    mock.patch.dict('os.environ', env, clear=True), redirect_stdout(io.StringIO()):
+                out = dict(preset_writes(XML, preset, fps, '01.09', SEGMENTS, elf, settings))
+            self.assertNotIn(CLOTH_SUBSTEPS - EBOOT_BASE, out)
+            self.assertNotIn(CLOTH_STIFFNESS - EBOOT_BASE, out)
+        with mock.patch.dict('os.environ', {'BB_CLOTH_UNCAPPED': '0'}, clear=True), redirect_stdout(io.StringIO()):
+            out = dict(preset_writes(XML, ['90 FPS++'], '90', '01.09', SEGMENTS, elf, {}))
+        self.assertIn(CLOTH_SUBSTEPS - EBOOT_BASE, out)  # the fixed rates keep theirs
 
     def test_camera_only_when_asked(self):
         writes, out = self.corrected(144)

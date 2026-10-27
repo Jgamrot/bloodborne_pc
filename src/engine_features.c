@@ -2,6 +2,7 @@
  * PC features installed through the engine hooks (engine_features.h). The features themselves
  * (in-game PC menu, enhancements, keyboard and mouse) add themselves to these lists. */
 #include "engine_features.h"
+#include "cloth_rate.h"
 #include "engine_hooks.h"
 #include "key_prompts.h"
 #include "menu_pointer.h"
@@ -26,7 +27,8 @@ static int menu_pointer_install(void) {
     return 0;
 }
 
-static const Install installs[] = {bb_pc_menu_install, bb_rebirth_install, bb_mouse_camera_install,
+static const Install installs[] = {bb_cloth_rate_install,
+                                   bb_pc_menu_install, bb_rebirth_install, bb_mouse_camera_install,
                                    bb_key_prompts_install, menu_pointer_install,
                                    bb_occlusion_queries_install};
 static const Frame frames[] = {bb_pc_menu_frame, bb_menu_pointer_frame};
