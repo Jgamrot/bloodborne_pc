@@ -23,7 +23,13 @@
  * plain -32768..32767 -> -128..127 read. The stick is then converted as shadPS4 does, with an
  * inner/outer dead zone (BB_PAD_DEADZONE, default 0 here, so a genuine pad reads as before; BB_PAD_DEADZONE_OUTER, default 127) mapping
  * the axis' travel up to full deflection. BB_PAD_CENTER=lx,ly,rx,ry overrides the neutral,
- * BB_PAD_CENTER_CAL=0 disables the measurement. */
+ * BB_PAD_CENTER_CAL=0 disables the measurement.
+ *
+ * Xbox pads (#182): XInput reports sticks the driver already centres, but worn sticks rest a
+ * little off centre and SDL applies no dead zone, so the character crept and the camera turned
+ * slowly. Such a pad gets an inner dead zone of PAD_XBOX_DEADZONE (BB_PAD_DEADZONE overrides),
+ * and only a biased neutral (a clone) is subtracted: a smaller "neutral" is the stick held while
+ * the pad connected, which used to turn into a slow push one way or another each session. */
 #define _GNU_SOURCE
 #include "runtime.h"
 #include "runtime_atlas_release.h"
@@ -92,7 +98,9 @@ static uint8_t connected_count;
 #define PAD_CAL_TIMEOUT_US 3000000u    /* after this, an all-zero reading is accepted as the neutral */
 #define PAD_CAL_BIAS 8192              /* |neutral| past this: a biased neutral and a reduced travel */
 #define PAD_CAL_REFINE 90              /* % of the base travel a push must reach to count as the full scale */
-static int cal_enabled=-1, pad_deadzone=-1, pad_deadzone_outer=-1, cal_manual;
+#define PAD_XBOX_DEADZONE 20           /* of 128: an Xbox pad's inner dead zone (about 16%) */
+static int cal_enabled=-1, pad_deadzone=-1, pad_deadzone_outer=-1, pad_deadzone_set, cal_manual;
+static int pad_xbox;                   /* the pad read is an Xbox 360 / One / Series pad */
 static int cal_have_center, cal_started, cal_quiet_count;
 static int cal_center[4], cal_prev[4], cal_manual_center[4];
 static int cal_base[4];                /* 0: normal pad; else |neutral| of a biased axis */
@@ -108,7 +116,7 @@ static void cal_load(void) {
     const char *v=getenv("BB_PAD_CENTER_CAL"); cal_enabled=!(v && *v=='0');
     /* Inner/outer dead zone, as shadPS4's analog_deadzone: [inner, outer] maps linearly to the
      * full deflection, so an axis with a reduced travel (outer below 127) reaches full. */
-    v=getenv("BB_PAD_DEADZONE"); pad_deadzone=v && *v ? atoi(v) : 0; /* bbport: 0 keeps the old read */
+    v=getenv("BB_PAD_DEADZONE"); pad_deadzone_set=v && *v; pad_deadzone=pad_deadzone_set ? atoi(v) : 0; /* bbport: 0 keeps the old read */
     if (pad_deadzone<0) pad_deadzone=0; else if (pad_deadzone>126) pad_deadzone=126;
     v=getenv("BB_PAD_DEADZONE_OUTER"); pad_deadzone_outer=v && *v ? atoi(v) : 127;
     if (pad_deadzone_outer<=pad_deadzone) pad_deadzone_outer=pad_deadzone<127 ? pad_deadzone+1 : 127;
@@ -166,7 +174,7 @@ static void cal_sample(const int16_t raw[4]) {
     if (allzero && now-cal_since<PAD_CAL_TIMEOUT_US) quiet=0;
     if (quiet) {
         if (++cal_quiet_count>=PAD_CAL_QUIET_SAMPLES) {
-            for (int i=0;i<4;++i) cal_center[i]=raw[i];
+            for (int i=0;i<4;++i) cal_center[i]=pad_xbox && abs(raw[i])<PAD_CAL_BIAS ? 0 : raw[i];
             cal_have_center=1;
             printf("Runtime: pad neutral: lx=%d ly=%d rx=%d ry=%d\n",cal_center[0],cal_center[1],cal_center[2],cal_center[3]);
             cal_set_base();
@@ -184,9 +192,10 @@ static uint8_t stick_axis(int axis,int16_t raw) {
     int v=travel>0 ? (int)((long long)d*128/travel) : 0;
     if (v>127) v=127; else if (v<-128) v=-128;
     const int mag=abs(v);
-    if (mag<=pad_deadzone || pad_deadzone>=pad_deadzone_outer) v=0;
+    const int inner=pad_deadzone_set || !pad_xbox ? pad_deadzone : PAD_XBOX_DEADZONE;
+    if (mag<=inner || inner>=pad_deadzone_outer) v=0;
     else {
-        int scaled=(int)(128.0*(mag-pad_deadzone)/(float)(pad_deadzone_outer-pad_deadzone));
+        int scaled=(int)(128.0*(mag-inner)/(float)(pad_deadzone_outer-inner));
         if (scaled>128) scaled=128;
         v = v>=0 ? scaled : -scaled;
     }
@@ -286,9 +295,13 @@ static SDL_Gamepad *current_gamepad(void) {
     }
     if (pick>=0 && pads[pick]!=gamepad) {
         gamepad=pads[pick];
+        const SDL_GamepadType type=SDL_GetGamepadType(gamepad);
+        pad_xbox=type==SDL_GAMEPAD_TYPE_XBOX360 || type==SDL_GAMEPAD_TYPE_XBOXONE;
         cal_reset(); /* a new pad has its own neutral */
         ++connected_count;
         printf("Runtime: gamepad connected: %s\n",SDL_GetGamepadName(gamepad));
+        if (pad_xbox && !pad_deadzone_set)
+            printf("Runtime: Xbox pad: stick dead zone %d of 128 (BB_PAD_DEADZONE sets another)\n",PAD_XBOX_DEADZONE);
     }
     return gamepad;
 }
@@ -645,7 +658,14 @@ static ABI int32_t pad_vibration(int32_t handle, const uint8_t *param) {
     if (!param) return ERR_INVALID_ARG;
     pthread_mutex_lock(&lock);
     SDL_Gamepad *g=current_gamepad();
-    if (g) SDL_RumbleGamepad(g,(uint16_t)(param[0]*257),(uint16_t)(param[1]*257),1000);
+    const bool ok=g && SDL_RumbleGamepad(g,(uint16_t)(param[0]*257),(uint16_t)(param[1]*257),1000);
+    /* BB_PAD_VIBRATION_LOG=1: what the game asks for (large, small motor) and whether SDL took
+     * it, to compare pads where some effects do not rumble (#213). */
+    static int log_vibration=-1;
+    if (log_vibration<0) { const char *e=getenv("BB_PAD_VIBRATION_LOG"); log_vibration=e && *e=='1'; }
+    if (log_vibration)
+        printf("Runtime: vibration large=%u small=%u -> %s (%s)\n",param[0],param[1],
+               ok ? "ok" : g ? SDL_GetError() : "no gamepad",g ? SDL_GetGamepadName(g) : "-");
     pthread_mutex_unlock(&lock);
     return 0;
 }

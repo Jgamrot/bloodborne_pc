@@ -156,7 +156,22 @@ int main(void) {
     gamepad=NULL;
     assert(SDL_DetachVirtualJoystick(second_id));
     assert(SDL_DetachVirtualJoystick(id));
+    /* An Xbox pad (#182): a small off-centre rest reads as centre, a push past the dead zone
+     * still reaches full deflection, and a small "neutral" (the stick held as the pad connected)
+     * is not subtracted; a clone's biased neutral still is. A DualShock reads as before. */
+    pad_xbox=1;
+    memset(cal_center,0,sizeof cal_center); memset(cal_base,0,sizeof cal_base);
+    assert(stick_axis(0,2000)==128 && stick_axis(0,-2400)==128);
+    assert(stick_axis(0,32767)==255 && stick_axis(0,-32768)==0);
+    assert(stick_axis(0,8000)>128 && stick_axis(0,8000)<150);
+    cal_have_center=0; cal_started=0; cal_quiet_count=0; cal_enabled=1;
+    const int16_t held[4]={6000,-3000,20000,0};
+    for (int i=0;i<PAD_CAL_QUIET_SAMPLES+2;++i) cal_sample(held);
+    assert(cal_have_center && cal_center[0]==0 && cal_center[1]==0 && cal_center[2]==20000);
+    pad_xbox=0;
+    memset(cal_center,0,sizeof cal_center); memset(cal_base,0,sizeof cal_base);
+    assert(stick_axis(0,2000)==135 && stick_axis(0,32767)==255);
     SDL_Quit();
     unlink(path);
-    puts("PASS: pad ABI, touch IDs/timing, left/right clicks, Xbox Back, SDL touch coordinates, overlay capture, two pads");
+    puts("PASS: pad ABI, touch IDs/timing, left/right clicks, Xbox Back, SDL touch coordinates, overlay capture, two pads, Xbox dead zone");
 }
