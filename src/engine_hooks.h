@@ -71,14 +71,21 @@ void bb_skip(BbSkip *site, int skip);
  * (game objects a feature reads may not exist yet). Returns 1 when all were read. */
 int bb_read(uint64_t address, void *out, size_t n);
 
-/* Registers a function run once a frame on the game's main thread, at the start of its
- * frame-time manager's update (sub_2434770). Call from an install function. */
+/* Registers a function run once a frame on the game's main thread, just after its frame-time
+ * manager's update (sub_2434770): the measured frame time is the one the task step reads next.
+ * Call from an install function. */
 void bb_on_main_frame(void (*tick)(void));
 /* Installs that hook when something registered; returns 1 when it went in. */
 int bb_main_frame_install(void);
-/* Whether a tick registered now will run: the frame-time manager's entry is still the game's
- * (Hunter's Atlas lamp travel takes it first) and there is room for one more. */
+/* Whether a tick registered now will run: the task step's call of the frame-time manager is the
+ * game's and there is room for one more. */
 int bb_main_frame_available(void);
+
+/* `at` holds `mov dword [mem], imm32` (`n` bytes, C7 /0, the memory operand neither rip- nor
+ * rsp-based) whose bytes before the immediate are `prefix`: it stores the 32-bit value at `cell`
+ * instead, read each time it runs. Flags and every register are kept. Returns 0, or -1 with
+ * nothing changed. */
+int bb_hook_store(uint64_t at, size_t n, BbCode prefix, const void *cell);
 
 /* `n` (at most 64) zeroed, 16-byte aligned bytes in the stubs' writable page, within rel32 reach
  * of the image: a value the game's code can load rip-relative. NULL when there is no room. */

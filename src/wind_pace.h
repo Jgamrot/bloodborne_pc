@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later
- * The grass and tree wind at 30's pace under Uncap FPS++ (wind_pace.c). On with wind_fix
- * (scripts/patches.py, which handles the fixed rates). */
+ * The grass and tree wind at 30's pace by each frame's time (wind_pace.c): uncapped, and at the
+ * fixed rates over scripts/patches.py's 1/(2 fps). On with wind_fix. */
 #ifndef BB_WIND_PACE_H
 #define BB_WIND_PACE_H
 

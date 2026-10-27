@@ -98,7 +98,8 @@ CLOTH_LEFT_OUT=((0xB6FBD4,0xB6FBD8),(0xB73F84,0xB73F8D),(0xB73FA8,0xB73FC1),(0x4
 # Kyo's 60, 90 and uncapped lists write none of it, so their cloth ran every substep: the base's
 # substep count (0xB6E67A) and constraint caves (0xB20000-0xB43000) are added for them
 # (cloth_writes). Uncapped the stiffness is 1 until src/cloth_rate.c points the caves at a cell
-# it sets each frame from the frame time (cloth_uncapped=0 / BB_CLOTH_UNCAPPED=0: none of it).
+# it sets each frame from the frame time (cloth_uncapped=0 / BB_CLOTH_UNCAPPED=0: none of it); it
+# does so above 60 at a fixed preset too, over the (60/fps)^2 written here (BB_FRAME_TIME_PRESETS=0: not).
 CLOTH_SUBSTEPS=0xB6E67A
 CLOTH_CAVES=(0xB20000,0xB43000)
 # Grass and tree wind at 30's pace and bend (wind_fix=0 / BB_WIND_FIX=0: off; after
@@ -107,8 +108,8 @@ CLOTH_CAVES=(0xB20000,0xB43000)
 # times that with the lists (60, 90, uncapped), twice with the base's real-dt slot (0x2713D91 on).
 # Its load at 0x27149EA weighs the force (the bend) and a push's ramp-in by the same step. The
 # step load reads 0x4D29E74 at 1/(2 fps) instead (the step of the device's +0x100 != 1 branch,
-# only read here) and the force load the game's 1/60; uncapped, src/wind_pace.c points the step
-# load at a cell it sets each frame.
+# only read here) and the force load the game's 1/60; src/wind_pace.c points the step loads at a
+# cell it sets each frame (at a fixed preset over this 1/(2 fps), unless BB_FRAME_TIME_PRESETS=0).
 WIND_STEP=0x4D29E70
 WIND_STEP_LOAD=0x2713D8D       # vmovss xmm4, [rip+disp32]
 WIND_PACE=0x4D29E74
@@ -145,7 +146,8 @@ PRESET_RATES={'60':60,'90':90,**SCALED_FPS}  # uncapped: the rate is not known h
 # 90 FPS++), so above 60 FPS they ran fps/60 times as fast: gravity 1.5x at 90, 2x at 120, 2.4x
 # at 144. Each 4-byte line that writes 1/60 where the eboot has the game's 1/30 gets 1/fps.
 # Awakenchan/BloodBorneButPc 0.9.32 beta 6 made the same change (released without source); these
-# sites are found again from the lists and the eboot, not taken from that build.
+# sites are found again from the lists and the eboot, not taken from that build. Below the target
+# src/frame_time.c makes them follow the frame time (tools/frame_time_sites.py; BB_FRAME_TIME_PRESETS=0: not).
 FRAME_STEP_GAME=struct.pack('<f',1/30)
 FRAME_STEP_LIST=struct.pack('<f',1/60)
 
@@ -197,6 +199,8 @@ def cloth_writes(xml, app_version, segments, elf, fps, settings):
     print(f'Patches: cloth at {fps or "uncapped"} FPS: one solver substep a frame, stiffness '
           + (f'{stiffness:.3f}' if fps else '(60 x frame time)^2 each frame (src/cloth_rate.c)'))
     return out
+
+
 def wind_pace(writes, fps, elf):
     """`writes` with the wind's step at 1/(2 fps) and its force at the game's 1/60 (uncapped: the
     force only); None, with nothing changed, when the eboot or the list has other bytes there."""

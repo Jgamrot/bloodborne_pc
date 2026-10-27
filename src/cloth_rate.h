@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later
- * Capes and coats under Uncap FPS++ (cloth_rate.c): the cloth's stiffness follows the frame time.
- * On with cloth_uncapped (scripts/patches.py, which writes the cloth package it needs). */
+ * Capes and coats (cloth_rate.c): the cloth's stiffness follows the frame time, uncapped (with
+ * cloth_uncapped) and above 60 at a fixed preset (with cloth_fix). scripts/patches.py writes the
+ * cloth package it needs. */
 #ifndef BB_CLOTH_RATE_H
 #define BB_CLOTH_RATE_H
 

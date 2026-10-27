@@ -2,6 +2,7 @@
  * Guarded hooks into the loaded game image (engine_hooks.h). */
 #include "engine_hooks.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #ifdef _WIN32
@@ -140,10 +141,9 @@ int bb_read(uint64_t address, void *out, size_t n) {
 #endif
 }
 
-/* The frame-time manager's update (SprjFlipper::Update), once a frame on the main thread; its
- * first 17 bytes, as bbhost's engine/frame_rate.cpp checks them. */
-enum { FRAME_MANAGER = 0x2434770, MAX_TICKS = 8 };
-static const BbCode frame_manager_prologue = {17, 0x522377a1cb8f9aceull};
+/* The frame-time manager's update (SprjFlipper::Update), once a frame on the main thread, from
+ * its one call in the task step (sub_2418d20); Hunter's Atlas lamp travel hooks its entry. */
+enum { FRAME_MANAGER = 0x2434770, FRAME_MANAGER_CALL = 0x2418e22, MAX_TICKS = 8 };
 static void (*g_ticks[MAX_TICKS])(void);
 static int g_tick_count;
 
@@ -151,19 +151,32 @@ void bb_on_main_frame(void (*tick)(void)) {
     if (tick && g_tick_count < MAX_TICKS) g_ticks[g_tick_count++] = tick;
 }
 
-static BB_GUEST_ABI void main_frame(void) {
+typedef int64_t (BB_GUEST_ABI *FrameManager)(void *);
+
+static BB_GUEST_ABI int64_t main_frame(void *flipper) {
+    const int64_t result = ((FrameManager)bb_guest(BB_BN(FRAME_MANAGER)))(flipper);
     for (int i = 0; i < g_tick_count; ++i) g_ticks[i]();
+    return result;
+}
+
+static int calls_frame_manager(void) {
+    const uint64_t at = BB_BN(FRAME_MANAGER_CALL);
+    if (!in_image(at, 5) || g_image[at] != 0xe8) return 0;
+    int32_t rel;
+    memcpy(&rel, g_image + at + 1, 4);
+    return at + 5 + (int64_t)rel == BB_BN(FRAME_MANAGER);
 }
 
 int bb_main_frame_install(void) {
     if (!g_tick_count) return 0;
-    return !bb_hook_entry(BB_BN(FRAME_MANAGER), frame_manager_prologue, (void *)main_frame);
+    if (!bb_hook_call(BB_BN(FRAME_MANAGER_CALL), BB_BN(FRAME_MANAGER), (void *)main_frame)) return 1;
+    printf("Main-frame tick: not hooked (%s); %d once-a-frame feature step(s) will not run\n", g_error,
+           g_tick_count);
+    return 0;
 }
 
 int bb_main_frame_available(void) {
-    const uint64_t at = BB_BN(FRAME_MANAGER);
-    return bb_hooks_enabled() && g_tick_count < MAX_TICKS && in_image(at, frame_manager_prologue.n) &&
-           bb_code_is(g_image + at, frame_manager_prologue);
+    return bb_hooks_enabled() && g_tick_count < MAX_TICKS && calls_frame_manager();
 }
 
 void *bb_hook_data(size_t n) {
@@ -287,6 +300,51 @@ int bb_hook_mid(uint64_t at, BbCode original, void (BB_GUEST_ABI *host)(BbRegs *
     *p++ = 0xe9;
     put_rel32(p, p + 4, site + n);
     divert(site, n, s);
+    return 0;
+}
+
+int bb_hook_store(uint64_t at, size_t n, BbCode prefix, const void *cell) {
+    if (!bb_hooks_enabled()) return refuse("engine hooks are off (BB_ENGINE_HOOKS=0)");
+    if (!cell || n < 7 || n > 15 || prefix.n != n - 4) return refuse("bad hook arguments");
+    if (!in_image(at, n)) return refuse("address outside the image");
+    unsigned char *site = g_image + at;
+    if (!bb_code_is(site, prefix)) return refuse("unexpected bytes at the hook site");
+    const size_t i = (site[0] & 0xf0) == 0x40;
+    const unsigned rex = i ? site[0] : 0, modrm = site[i + 1], mod = modrm >> 6, rm = modrm & 7;
+    if ((rex & 8) || site[i] != 0xc7 || ((modrm >> 3) & 7) || mod == 3 || (mod == 0 && rm == 5))
+        return refuse("not a mov dword [mem], imm32");
+    const unsigned sib = rm == 4 ? site[i + 2] : 0, base = rm == 4 ? (sib & 7) : rm;
+    const int no_base = mod == 0 && rm == 4 && base == 5;
+    const size_t disp = mod == 1 ? 1 : mod == 2 || no_base ? 4 : 0;
+    if (i + 2 + (rm == 4) + disp + 4 != n) return refuse("not a mov dword [mem], imm32");
+    if (!no_base && base == 4 && !(rex & 1)) return refuse("an rsp-based store");
+    /* A scratch register the address does not use: rax, rcx or rdx. */
+    const int base_reg = no_base ? -1 : (int)(base | (rex & 1) << 3);
+    const int index_reg = rm == 4 && ((sib >> 3) & 7) != 4 ? (int)(((sib >> 3) & 7) | (rex & 2) << 2) : -1;
+    unsigned s = 0;
+    while ((int)s == base_reg || (int)s == index_reg) ++s;
+    unsigned char *t = stub(5 + 1 + 6 + n + 1 + 8 + 5);
+    if (!t) return refuse("no stub space (not initialised, sealed or full)");
+    if (!reachable(t, cell)) return refuse("the cell is out of reach");
+    /* Below the red zone: save the scratch, load the cell into it, store it as the game stores the
+     * immediate (89 /r for C7 /0, the same addressing), restore it. lea and mov keep the flags. */
+    static const unsigned char down[] = {0x48, 0x8d, 0x64, 0x24, 0x80};             /* lea rsp, [rsp-0x80] */
+    static const unsigned char up[] = {0x48, 0x8d, 0xa4, 0x24, 0x80, 0x00, 0x00, 0x00}; /* lea rsp, [rsp+0x80] */
+    unsigned char *p = emit(t, down, sizeof(down));
+    *p++ = (unsigned char)(0x50 + s);
+    *p++ = 0x8b;
+    *p++ = (unsigned char)(0x05 | s << 3);
+    put_rel32(p, p + 4, cell);
+    p += 4;
+    if (i) *p++ = (unsigned char)rex;
+    *p++ = 0x89;
+    *p++ = (unsigned char)(mod << 6 | s << 3 | rm);
+    p = emit(p, site + i + 2, n - i - 2 - 4);
+    *p++ = (unsigned char)(0x58 + s);
+    p = emit(p, up, sizeof(up));
+    *p++ = 0xe9;
+    put_rel32(p, p + 4, site + n);
+    divert(site, n, t);
     return 0;
 }
 

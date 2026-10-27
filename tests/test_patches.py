@@ -17,8 +17,7 @@ from patches import (EBOOT_BASE, FIXES, FPS_PRESETS, OUTPUT_SIZE, RESOLUTION_TEM
                      eboot_matches_patches, patch_fingerprint, patch_sites, game_app_version,
                      eboot_is_109, SCALED_BASE, SCALED_FPS, SCALED_VALUES, fps_preset, rate_scaled,
                      eboot_segments, rate_corrections, camera_value, EFFECT_RATE_SITES,
-                     CLOTH_STIFFNESS, CLOTH_LEFT_OUT, CLOTH_SUBSTEPS, CLOTH_CAVES, CAMERA_FIELDS, frame_steps, preset_writes, with_external,
-                     CLOTH_STIFFNESS, CLOTH_LEFT_OUT, WIND_STEP, WIND_STEP_LOAD, WIND_FORCE_LOAD, WIND_PACE, CAMERA_FIELDS, frame_steps, preset_writes, with_external,
+                     CLOTH_STIFFNESS, CLOTH_LEFT_OUT, CLOTH_SUBSTEPS, CLOTH_CAVES, WIND_STEP, WIND_STEP_LOAD, WIND_FORCE_LOAD, WIND_PACE, CAMERA_FIELDS, frame_steps, preset_writes, with_external,
                      HEAP_PATCH, HEAP_GUARD, pc_heaps_enabled, site_matches,
                      HASH_GUARDS, guarded_patches, ONLINE_BLOCKED, online_allowed)
 
@@ -280,6 +279,8 @@ class RateCorrectionTests(unittest.TestCase):
         with mock.patch.dict('os.environ', {'BB_CLOTH_UNCAPPED': '0'}, clear=True), redirect_stdout(io.StringIO()):
             out = dict(preset_writes(XML, ['90 FPS++'], '90', '01.09', SEGMENTS, elf, {}))
         self.assertIn(CLOTH_SUBSTEPS - EBOOT_BASE, out)  # the fixed rates keep theirs
+
+    @unittest.skipUnless(GAME_ELF.is_file(), 'needs a prepared 1.09 eboot.elf (BB_TEST_EBOOT_ELF)')
     def test_wind_at_30s_pace_and_bend(self):
         elf = GAME_ELF.read_bytes()
         load, force, pace = (a - EBOOT_BASE for a in (WIND_STEP_LOAD, WIND_FORCE_LOAD, WIND_PACE))

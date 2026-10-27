@@ -225,6 +225,7 @@ page take precedence:
 | High-FPS effects that move by each frame's time while counting in whole steps (smooth steps) | | `BB_EFFECT_SMOOTH=0` |
 | High-FPS torch, brazier and candle flicker at 30's pace (with the effect step gate) | | `BB_BLINK_HOLD=0` |
 | High-FPS wakes in water spreading at 30's pace (with the effect step gate) | | `BB_WATER_GATE=0` |
+| FPS presets below their target play as the lower rate would (fixed steps, effects' step, turn step, cape stiffness, grass wind and, with `camera_fix=1`, the camera's eases follow each frame's time) | | `BB_FRAME_TIME_PRESETS=0` keeps the preset's per-frame values |
 | Ultrawide camera and centered HUD (non-16:9 outputs) | `output_res=16:9 size` | `BB_ASPECT=0` |
 | Indirect dispatch guard (skips implausible GPU work counts) | | `BB_INDIRECT_GUARD=0` |
 | Indirect draw guard (skips implausible vertex and instance counts) | | `BB_INDIRECT_DRAW_GUARD=0` |
