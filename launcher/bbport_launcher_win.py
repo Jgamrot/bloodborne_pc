@@ -104,8 +104,32 @@ def run_role(argv):
     try:
         runpy.run_path(path, run_name='__main__')
     except SystemExit as stop:
-        return stop.code if isinstance(stop.code, int) else (0 if stop.code is None else 1)
+        return exit_status(stop.code if isinstance(stop.code, int) else (0 if stop.code is None else 1))
     return 0
+
+
+# Windows status codes a process can end with before it prints anything (run.py passes them on).
+EXIT_HINTS = {
+    0xC0000005: 'it crashed (access violation)',
+    0xC000007B: 'a DLL in bin is damaged or the wrong kind: extract the release into a new, empty folder',
+    0xC0000135: 'a DLL is missing from bin (antivirus?): extract the release into a new, empty folder',
+    0xC0000409: 'it stopped on a fatal error',
+}
+
+
+def exit_status(code):
+    """`code` as sys.exit and a Qt int take it: 32 bits, signed (0xC000007B is -1073741701)."""
+    code &= 0xFFFFFFFF
+    return code - (1 << 32) if code & 0x80000000 else code
+
+
+def exit_code_text(code):
+    """An exit code as the launcher shows it: Windows status codes in hex, with what they mean."""
+    code &= 0xFFFFFFFF
+    if not code & 0x80000000:
+        return str(code)
+    hint = EXIT_HINTS.get(code)
+    return f'0x{code:08X}' + (f', {hint}' if hint else '')
 
 
 def https_context():
@@ -2285,7 +2309,8 @@ class Launcher:
             for _i in range(500):
                 item = self.output.get_nowait()
                 if isinstance(item, tuple):
-                    self.append(_('\n— the game exited (code {}) —\n', '\n— игра завершилась (код {}) —\n').format(item[0]))
+                    self.append(_('\n— the game exited (code {}) —\n', '\n— игра завершилась (код {}) —\n').format(
+                        exit_code_text(item[0])))
                     self.process = None
                     if self.job:
                         self.job.close()
@@ -2565,7 +2590,7 @@ def play_without_window(settings):
                 sys.stdout.write(text)
             except (OSError, ValueError):
                 pass
-        return process.wait()
+        return exit_status(process.wait())
 
 
 def version_tuple(text):
