@@ -191,6 +191,10 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     }
 }
 
+// The pointer hidden by the port (one hide, one show): SDL_CursorVisible() does not follow the
+// Win32 ShowCursor counter.
+static bool cursor_hidden_by_port = false;
+
 WindowSDL::~WindowSDL() {
     // Never leave the desktop with a captured mouse or a hidden pointer, also when the game
     // closes while the camera holds the mouse.
@@ -226,8 +230,6 @@ void WindowSDL::UpdateTextTitle() {
     SDL_SetWindowTitle(window, title.c_str());
     BbOverlay::SetTextEntry(text_active, text_prompt, text);
 }
-
-static bool cursor_hidden_by_port = false;
 
 bool WindowSDL::PollEvents() {
     {
