@@ -9,6 +9,7 @@
 #include "common/assert.h"
 #include "common/debug.h"
 #include "common/types.h"
+#include "bbport_settings.h"
 #include "imgui/renderer/imgui_core.h"
 #include "sdl_window.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
@@ -254,6 +255,7 @@ void Instance::DeviceLost(const char* where) const {
                          vendors[i].vendorFaultData);
         }
     }
+    BbSettings::NoteDeviceLost();
     UNREACHABLE_MSG("GPU device lost");
 }
 

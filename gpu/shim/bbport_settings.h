@@ -119,6 +119,11 @@ struct Values {
     /// Why FSR 4 cannot run (assets, device features), or null. Set by the renderer.
     std::atomic<const char*> fsr4_problem{nullptr};
     std::atomic<bool> fsr4_supported{false}, fsr411_supported{false};
+    /// FSR 4 recorded its last frame (the renderer); a device loss then is noted below.
+    std::atomic<bool> fsr4_running{false};
+    /// The GPU was lost while FSR 4 ran (#151: RX 6700 XT, AMD 26.10.1): bbport.ini
+    /// fsr4_device_lost=1, and the next start saves FSR 3.1 instead and says why.
+    std::atomic<bool> fsr4_device_lost{false};
     /// DLSS (bbport_dlss.dll, NVIDIA RTX) is ready, or why not (null before the device exists).
     std::atomic<bool> dlss_supported{false};
     std::atomic<const char*> dlss_problem{nullptr};
@@ -169,6 +174,8 @@ bool ResolutionNeedsRestart();
 bool AspectNeedsRestart();
 /// Writes the file (menu changes).
 void Save();
+/// The GPU was lost: with FSR 4 running, writes fsr4_device_lost=1 for the next start.
+void NoteDeviceLost();
 
 /// Render resolution divisor of a preset (1.0 native, 1.5 quality, ...).
 float PresetScale(int preset);

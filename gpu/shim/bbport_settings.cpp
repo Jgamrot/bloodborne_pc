@@ -23,6 +23,32 @@ const char* Path() {
     return env && env[0] ? env : "bbport.ini";
 }
 
+// Sets `key` in the file to `value` and removes `drop`, keeping every other line as it is.
+void RewriteKey(const char* key, const char* value, const char* drop) {
+    std::vector<std::string> lines;
+    bool found = false;
+    if (FILE* file = std::fopen(Path(), "r")) {
+        char line[256];
+        while (std::fgets(line, sizeof(line), file)) {
+            std::string text{line};
+            text.erase(text.find_last_not_of("\r\n") + 1);
+            const std::string name = text.substr(0, text.find('='));
+            if (name == drop) continue;
+            if (name == key) {
+                text = std::string(key) + "=" + value;
+                found = true;
+            }
+            lines.push_back(text);
+        }
+        std::fclose(file);
+    }
+    if (!found) lines.push_back(std::string(key) + "=" + value);
+    if (FILE* file = std::fopen(Path(), "w")) {
+        for (const std::string& line : lines) std::fprintf(file, "%s\n", line.c_str());
+        std::fclose(file);
+    }
+}
+
 float Clamp(float v, float lo, float hi) {
     return std::clamp(v, lo, hi);
 }
@@ -72,6 +98,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.fsr4_auto_exposure = i != 0;
     } else if (key == "fsr4_invert_jitter") {
         v.fsr4_invert_jitter = i != 0;
+    } else if (key == "fsr4_device_lost") {
+        v.fsr4_device_lost = i != 0;
     } else if (key == "mouse_camera") {
         v.mouse_camera = i != 0;
     } else if (key == "mouse_sensitivity") {
@@ -195,6 +223,14 @@ void ConfigureUpscalerSupport(bool fsr4, bool fsr411) {
         std::printf("Upscaler: %s unsupported on this GPU; falling back to FSR 3.1 before the first frame\n",
                     UpscalerName(requested));
         v.upscaler = UpscalerFsr3;
+    } else if (IsFsr4(requested) && v.fsr4_device_lost) {
+        v.fsr4_problem = "The GPU was lost with FSR 4 on last time; using FSR 3.1. Choose FSR 4 again to retry";
+        std::printf("Upscaler: the GPU was lost while %s ran last time; using FSR 3.1 "
+                    "(choose it again in the menu to retry)\n", UpscalerName(requested));
+        v.upscaler = UpscalerFsr3;
+        // Saved as FSR 3.1, so choosing FSR 4 again (here or in the launcher) is the retry.
+        v.fsr4_device_lost = false;
+        RewriteKey("upscaler", UpscalerName(UpscalerFsr3), "fsr4_device_lost");
     }
 }
 
@@ -244,8 +280,14 @@ bool ResolutionNeedsRestart() {
          (v.upscaler == UpscalerTaa) != (v.startup_upscaler == UpscalerTaa)));
 }
 
+namespace {
+bool device_lost_now = false; ///< Save() from NoteDeviceLost: FSR 4 is the upscaler that failed
+} // namespace
+
 void Save() {
-    const auto& v = Get();
+    auto& v = Get();
+    // Choosing FSR 4 again in the menu is the retry: the note goes.
+    if (IsFsr4(v.upscaler) && !device_lost_now) v.fsr4_device_lost = false;
     // Lines this function does not write (keys other tools own, such as pc_menu) are kept, once
     // each: a key repeated in the file keeps its last line, the one Load() applies.
     std::vector<std::string> kept;
@@ -260,7 +302,7 @@ void Save() {
             bool ours = false;
             for (const char* name : {"upscaler", "preset", "sharpen", "sharpness", "jitter", "reactive",
                                      "object_motion", "reactive_scale", "reactive_threshold", "reactive_max",
-                                     "debug_view", "show_fps", "fsr4_auto_exposure", "fsr4_invert_jitter",
+                                     "debug_view", "show_fps", "fsr4_auto_exposure", "fsr4_invert_jitter", "fsr4_device_lost",
                                      "model_lod", "output_res", "live_resolution",
                                      "frame_gen", "frame_gen_multiplier", "frame_gen_fit_display",
                                      "mouse_camera", "mouse_sensitivity", "mouse_invert_y", "mouse_menu",
@@ -292,6 +334,7 @@ void Save() {
                  v.reactive_scale.load(), v.reactive_threshold.load(), v.reactive_max.load(),
                  v.debug_view.load(), int(v.show_fps.load()),
                  int(v.fsr4_auto_exposure.load()), int(v.fsr4_invert_jitter.load()));
+    if (v.fsr4_device_lost) std::fprintf(file, "fsr4_device_lost=1\n");
     std::fprintf(file, "mouse_camera=%d\nmouse_sensitivity=%d\nmouse_invert_y=%d\nmouse_menu=%d\n"
                        "mouse_hide_cursor=%d\nmouse_flick_threshold=%d\n",
                  int(v.mouse_camera.load()), v.mouse_sensitivity.load(), int(v.mouse_invert_y.load()),
@@ -312,6 +355,18 @@ void Save() {
         std::fprintf(file, "%s\n", line.c_str());
     }
     std::fclose(file);
+}
+
+void NoteDeviceLost() {
+    auto& v = Get();
+    if (!v.fsr4_running || !IsFsr4(v.upscaler)) return;
+    std::printf("Upscaler: the GPU was lost while %s ran; the next start uses FSR 3.1\n",
+                UpscalerName(v.upscaler));
+    std::fflush(stdout);
+    v.fsr4_device_lost = true;
+    device_lost_now = true;
+    Save();
+    device_lost_now = false;
 }
 
 // The in-game PC menu (src/pc_menu.c) reads and writes the same settings through these.
