@@ -266,11 +266,12 @@ ENHANCEMENTS = [
                            'Повторные бои с боссами у их фонарей (эксперимент; сохраните копию сохранений)'), False),
 ]
 INI_FLAGS = {'sharpen', 'object_motion', 'show_fps', 'mouse_camera', 'mouse_invert_y', 'mouse_menu', 'mouse_hide_cursor', 'frame_gen_fit_display',
+             'overlay_pad_shortcut',
              *(k for k, _t, _o in EFFECTS + EXTRAS + CHEATS + TWEAKS + ENHANCEMENTS + ATLAS)}
 INI_DEFAULTS = {'upscaler': 'dlss', 'preset': '2', 'sharpen': '1', 'sharpness': '0.50',
                 'object_motion': '1', 'show_fps': '1', 'output_res': '2560x1440', 'hud_position': '100', 'model_lod': '0',
                 'live_resolution': 'auto', 'mouse_camera': '1', 'mouse_sensitivity': '10', 'mouse_menu': '1',
-                'mouse_invert_y': '0', 'mouse_hide_cursor': '0', 'move_smoothing': '60', 'frame_gen': 'off', 'frame_gen_multiplier': '2', 'frame_gen_fit_display': '0',
+                'mouse_invert_y': '0', 'mouse_hide_cursor': '0', 'overlay_pad_shortcut': '1', 'pad_back': 'gestures', 'move_smoothing': '60', 'frame_gen': 'off', 'frame_gen_multiplier': '2', 'frame_gen_fit_display': '0',
                 'atlas_npc_mode': 'all',
                 **{key: '1' if on else '0' for key, _t, on in EFFECTS + EXTRAS + CHEATS + TWEAKS + ENHANCEMENTS + ATLAS}}
 APP_DEFAULTS = {'ui_language': '', 'game_dir': str(PORT_DIR.parent / 'CUSA03173'), 'user_dir': '', 'dlc_dir': '',
@@ -395,6 +396,10 @@ MOUSE_SPEEDS = [(str(v), (f'{v / 10:.1f}x',)) for v in (5, 7, 10, 13, 16, 20, 30
 # towards a new WASD direction per 1/60 s, in percent of a full push; 100 is off.
 MOVE_SMOOTHING = [('100', ('Off', 'Выкл.')), ('80', ('Light', 'Слабое')),
                   ('60', ('Medium (default)', 'Среднее (по умолчанию)')), ('35', ('Strong', 'Сильное'))]
+# Xbox View / Back alone (bbport.ini pad_back, #228): the touchpad half it clicks; View + d-pad
+# left or right picks either one.
+PAD_BACK = [('gestures', ('Gestures (default)', 'Жесты (по умолчанию)')),
+            ('effects', ('Personal Effects', 'Личные вещи'))]
 FRAMES_AHEAD = [('', ('1 (default)', '1 (по умолчанию)')), ('2', ('2',)), ('0', ('Unbounded', 'Без ограничения'))]
 VRAM_BUDGETS = [('', ('Automatic (recommended)', 'Автоматически (рекомендуется)')),
                 ('2560', ('2.5 GB',)), ('3072', ('3 GB',)), ('4096', ('4 GB',)),

@@ -112,6 +112,10 @@ FIELDS = {
         row('mouse_sensitivity', 'Mouse sensitivity', 'choice', core.MOUSE_SPEEDS),
         row('mouse_invert_y', 'Invert mouse Y', 'toggle'),
         row('mouse_hide_cursor', 'Hide the mouse cursor in the game (for mouse-to-controller tools)', 'toggle'),
+        row('pad_back', 'Xbox View / Back button opens (View + d-pad left or right opens either)', 'choice',
+            core.PAD_BACK),
+        row('overlay_pad_shortcut', 'L3 + R3 opens the in-game menu (off for L3 jump mods; Insert still opens it)',
+            'toggle'),
         row('move_smoothing', 'Keyboard movement smoothing (WASD direction changes)', 'choice',
             core.MOVE_SMOOTHING),
         row('debug_camera', 'Free camera', 'toggle', hint=OFF_ONLINE),
@@ -177,6 +181,7 @@ SETTINGS_SECTIONS = {
         ('Key bindings', []),
         ('Mouse', ['mouse_camera', 'mouse_menu', 'mouse_sensitivity', 'mouse_invert_y', 'mouse_hide_cursor']),
         ('Keyboard', ['move_smoothing']),
+        ('Controller', ['pad_back', 'overlay_pad_shortcut']),
     ],
     'Game & Saves': [
         ('Game files', ['game_dir', 'dlc_dir']),
@@ -216,6 +221,8 @@ SEARCH_TERMS = {
     'user_dir': 'save folder save path', 'game_dir': 'eboot install game files',
     'online_npid': 'account id username', 'mouse_camera': 'camera controls', 'mouse_menu': 'cursor pointer click menus',
     'mouse_hide_cursor': 'cursor pointer hide invisible',
+    'overlay_pad_shortcut': 'overlay l3 r3 jump guide menu shortcut',
+    'pad_back': 'xbox view back select personal effects gestures touchpad',
     'ui_language': 'launcher language', 'mods_enabled': 'load mods',
 }
 SEARCH_ACTIONS = [
