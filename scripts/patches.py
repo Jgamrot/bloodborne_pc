@@ -506,7 +506,7 @@ def scaled_sizes(settings):
     the game renders at output / preset scale (or at the output size without upscaler) and the
     upscaler fills the output. None at 1080p and for TAA (native, live host targets only)."""
     out=output_size(settings)
-    if out==OUTPUT_SIZE or (settings.get('upscaler')=='taa' and out[0]*9==out[1]*16): return None
+    if out==OUTPUT_SIZE or (settings.get('upscaler')=='taa' and is_16_9(out)): return None
     scale=1.0
     if settings.get('upscaler','fsr3') not in ('off','taa'):
         preset=int(settings.get('preset','0') or 0)
@@ -520,9 +520,14 @@ def scaled_sizes(settings):
     return render,out
 
 
+def is_16_9(output):
+    """16:9 to within a pixel of width: 1366x768 (16:9 is 1365.3 wide) plays as 16:9."""
+    return abs(output[0]*9-output[1]*16)<=9
+
+
 def ultrawide(output):
     """Wider than 16:9."""
-    return output[0]*OUTPUT_SIZE[1]>output[1]*OUTPUT_SIZE[0]
+    return output[0]*OUTPUT_SIZE[1]>output[1]*OUTPUT_SIZE[0] and not is_16_9(output)
 
 
 def hud_canvas(output):
@@ -936,7 +941,7 @@ def main():
     ui=OUTPUT_SIZE
     out=output_size({'output_res': a.output_res}) if a.output_res else OUTPUT_SIZE
     if ultrawide(out): ui=hud_canvas(out)
-    elif out[0]*9 != out[1]*16: ui=out
+    elif not is_16_9(out): ui=out
     if size:
         writes+=resolution_writes(a.xml,size,a.app_version,segments,ui)
         if ultrawide(out):

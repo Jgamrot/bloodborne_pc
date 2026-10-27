@@ -68,8 +68,8 @@ bool OnlineBlocked(int effect);
 // Last slot retains a validated custom resolution loaded from the launcher/ini.
 // Wider than 16:9 (2560x1080 .. 5120x1440, 3840x1600, 3840x1080): camera and HUD patched at start
 // (patches.py ultrawide_writes); src/pc_menu.c names them by index.
-inline int OutputWidths[] = {1280,1920,2560,3840,1280,2560,3440,5120,5120,1080,3840,3840,1920,1920};
-inline int OutputHeights[] = {720,1080,1440,2160,800,1080,1440,1440,2160,1920,1600,1080,1200,1080};
+inline int OutputWidths[] = {1280,1920,2560,3840,1280,2560,3440,5120,5120,1080,3840,3840,1920,1366,1920};
+inline int OutputHeights[] = {720,1080,1440,2160,800,1080,1440,1440,2160,1920,1600,1080,1200,768,1080};
 inline constexpr int OutputCount = sizeof(OutputWidths) / sizeof(OutputWidths[0]);
 inline constexpr int OutputCustom = OutputCount - 1;
 inline constexpr int OutputDefault = 1; ///< 1920x1080, the game's own size

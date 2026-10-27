@@ -537,7 +537,7 @@ def main():
                                             stdout=subprocess.PIPE, text=True, creationflags=no_console())
                     live = result.stdout.strip() if result.returncode == 0 else '0'
             live = '1' if live == '1' or not patched else '0'
-        from patches import hud_canvas, ultrawide
+        from patches import hud_canvas, is_16_9, ultrawide
         env.pop('BB_ASPECT_PATCHED', None)
         if scaled_output or env.get('BB_OUTPUT_RES'):
             movie_output = scaled_output or env['BB_OUTPUT_RES']
@@ -550,7 +550,7 @@ def main():
                 env['BB_UI_RES'] = f'{canvas[0]}x{canvas[1]}'
                 env['BB_ASPECT_PATCHED'] = '1'
                 print(f'Output {movie_output}: ultrawide, HUD {env["BB_UI_RES"]}; aspect changes require restart')
-            elif ow * 9 != oh * 16:
+            elif not is_16_9((ow, oh)):
                 live = '0'
                 env['BB_UI_RES'] = movie_output
                 print('Aspect correction: centered 16:9 stage; aspect changes require restart')

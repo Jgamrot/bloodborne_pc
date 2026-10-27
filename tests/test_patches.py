@@ -11,7 +11,7 @@ from pathlib import Path
 
 from patches import (EBOOT_BASE, FIXES, FPS_PRESETS, OUTPUT_SIZE, RESOLUTION_TEMPLATE, SCENE_HEIGHT,
                      SCENE_WIDTH, UI_HEIGHT, UI_WIDTH, compile_patches,
-                     render_size, resolution_writes, scaled_sizes, output_size, effect_patches,
+                     render_size, resolution_writes, scaled_sizes, output_size, effect_patches, is_16_9, ultrawide,
                      validate_patch_requirements, external_patches, external_selection,
                      compile_external, frame_rate_fixes, sprint_fix_enabled, eboot_bytes,
                      eboot_matches_patches, patch_fingerprint, patch_sites, game_app_version,
@@ -95,6 +95,11 @@ class NativeUiTests(unittest.TestCase):
                          ((1916, 1078), (3840, 2160)))
         # TAA is native-only and uses the live host targets.
         self.assertIsNone(scaled_sizes({'output_res': '1280x720', 'upscaler': 'taa', 'preset': '3'}))
+        # 1366x768 is 16:9 to within a pixel: scaled like 720p, native TAA, not ultrawide.
+        self.assertEqual(scaled_sizes({'output_res': '1366x768', 'preset': '1'}), ((910, 512), (1366, 768)))
+        self.assertIsNone(scaled_sizes({'output_res': '1366x768', 'upscaler': 'taa'}))
+        self.assertTrue(is_16_9((1366, 768)) and is_16_9((1920, 1080)))
+        self.assertFalse(is_16_9((1360, 768)) or ultrawide((1366, 768)))
 
 
     def test_arbitrary_aspect_and_native_movie_viewport(self):

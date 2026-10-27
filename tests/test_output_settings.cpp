@@ -23,7 +23,7 @@ int main() {
     unsetenv("BB_RENDER_RES");
 #endif
     auto& settings = Get();
-    for (const char* size : {"1920x1080", "1920x1200", "3840x1600", "5000x2000", "1080x1920", "1280x800"}) {
+    for (const char* size : {"1920x1080", "1920x1200", "1366x768", "3840x1600", "5000x2000", "1080x1920", "1280x800"}) {
         FILE* file = std::fopen(path.string().c_str(), "w");
         assert(file);
         std::fprintf(file, "output_res=%s\n", size);
@@ -53,6 +53,9 @@ int main() {
     settings.output_res = 12; // 1920x1200: the in-game 16:10 choice needs a restart.
     assert(OutputWidths[settings.output_res] == 1920 && OutputHeights[settings.output_res] == 1200);
     assert(AspectNeedsRestart() && ResolutionNeedsRestart());
+    settings.output_res = 13; // 1366x768: 16:9 to within a pixel, switched to live.
+    assert(OutputWidths[settings.output_res] == 1366 && OutputHeights[settings.output_res] == 768);
+    assert(!AspectNeedsRestart());
     settings.output_res = 6; // 3440x1440, different camera and HUD aspect.
     assert(AspectNeedsRestart() && ResolutionNeedsRestart());
     // Saving twice writes each key once; repeated keys from older saves collapse to the last value.

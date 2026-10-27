@@ -39,7 +39,7 @@ UPSCALERS = [("FSR 4", "fsr4"), ("FSR 4.1.1", "fsr411"), ("FSR 3", "fsr3"),
              ("TAA (нативное сглаживание)", "taa"), ("Выключен", "off")]
 PRESETS = [("Native AA", 0), ("Quality (x1.5)", 1), ("Balanced (x1.7)", 2),
            ("Performance (x2)", 3), ("Ultra Performance (x3)", 4)]
-OUTPUT_RES = [("1280×720 (Steam Deck)", "1280x720"), ("1920×1080", "1920x1080"),
+OUTPUT_RES = [("1280×720 (Steam Deck)", "1280x720"), ("1366×768", "1366x768"), ("1920×1080", "1920x1080"),
               ("1920×1200 (16:10)", "1920x1200"), ("2560×1440", "2560x1440"),
               ("3840×2160", "3840x2160")]
 # Game effects (patches applied at start): bbport.ini key, title, default.
