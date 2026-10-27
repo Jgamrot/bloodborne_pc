@@ -234,6 +234,7 @@ page take precedence:
 | Blur-kernel sample count clamp (exit with debug exception 0xa0020007) | | `BB_KERNEL_CLAMP=0` |
 | Failed render jobs give their slot back (Laurence's cinematic above 30 FPS) | | `BB_JOB_SLOT_FIX=0` |
 | Render resource cache in 512 MiB of the port's memory (the game's: 160 MiB) | | `BB_RENDER_RESOURCE_CACHE_MB=160` keeps the game's |
+| GX range allocator at 288 MiB (the game's: 160 MiB; Ebrietas' trail filled it before device losses) | | `BB_GX_REGION_MB=160` keeps the game's (up to 416) |
 | Shader cache written by another build: its shaders are rebuilt | | `BB_SHADER_BUILD_CHECK=0` |
 | Skip draws whose vertex buffer table pointer is null | | `BB_SKIP_NULL_VB_TABLE=0` |
 | Zeroed vertex buffer descriptors read as zero (a valid vertex format) | | `BB_NULL_VERTEX_INPUT=0` |
