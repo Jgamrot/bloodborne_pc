@@ -89,6 +89,17 @@ def fail(message):
     sys.exit(1)
 
 
+# Windows' Smart App Control / App Control (WDAC) refuses unsigned programs: ERROR_SYSTEM_INTEGRITY_POLICY
+# (4551) and ERROR_VIRUS_INFECTED-like refusals (225) end the start with a traceback otherwise (#234).
+BLOCKED_BY_POLICY = (4551, 225)
+
+
+def blocked_message(program):
+    return (f'Windows blocked {Path(program).name} (Smart App Control or an App Control policy). The '
+            "port's programs are not code-signed, so Smart App Control refuses them: turn it off in Windows "
+            "Security > App & browser control > Smart App Control, or allow the port's folder in your policy.")
+
+
 # The scripts a start runs or imports. A copy of the port with some left out (seen in repacks
 # from other sites, GitHub issue #118) stopped with "No module named 'game_check'"; it now says
 # what is missing and where the whole package is. (After Awaken's port 0.9.30: "a game folder
@@ -533,9 +544,14 @@ def main():
                 caps = probe.parent / 'bb-gpu-capabilities.exe'
                 live = '0'  # without the checker, the safe answer: no live changes
                 if caps.is_file():
-                    result = subprocess.run([str(caps), '--live-resolution'], stdin=subprocess.DEVNULL,
-                                            stdout=subprocess.PIPE, text=True, creationflags=no_console())
-                    live = result.stdout.strip() if result.returncode == 0 else '0'
+                    try:
+                        result = subprocess.run([str(caps), '--live-resolution'], stdin=subprocess.DEVNULL,
+                                                stdout=subprocess.PIPE, text=True, creationflags=no_console())
+                        live = result.stdout.strip() if result.returncode == 0 else '0'
+                    except OSError as error:
+                        if getattr(error, 'winerror', None) in BLOCKED_BY_POLICY:
+                            fail(blocked_message(caps))
+                        print(f'Live resolution: {caps.name} did not run ({error}); startup patch')
             live = '1' if live == '1' or not patched else '0'
         from patches import hud_canvas, is_16_9, ultrawide
         env.pop('BB_ASPECT_PATCHED', None)
@@ -643,7 +659,12 @@ def main():
                    '--user', str(user_dir),
                    '--timeout', env.get('BB_TIMEOUT', '0'), *args]
         # No stdin: an inherited pipe (shells such as Git Bash) cost the game its console output.
-        game_proc = subprocess.Popen(command, stdin=subprocess.DEVNULL, creationflags=no_console())
+        try:
+            game_proc = subprocess.Popen(command, stdin=subprocess.DEVNULL, creationflags=no_console())
+        except OSError as error:
+            if getattr(error, 'winerror', None) in BLOCKED_BY_POLICY:
+                fail(blocked_message(probe))
+            raise
         started = []
         try:
             started = start_companions(data, env, game_proc.pid)
