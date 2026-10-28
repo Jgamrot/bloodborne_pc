@@ -42,7 +42,7 @@ cat > "$dest/SOURCE.txt" <<EOF
 shadnet.exe: shadnet-p2p by Wozzardman (GPL-2.0-or-later)
   $REPO at $COMMIT
 with this port's patches from packaging/windows/shadnet-p2p/ in
-  https://github.com/Jgamrot/bloodborne_pc
+  https://github.com/Jgamrot/yharnam-pc
 built by packaging/windows/build_coop_server.sh. The DLLs are MSYS2 CLANG64's (Qt 6, protobuf,
 Abseil, ICU and others), each under its own licence.
 EOF

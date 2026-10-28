@@ -13,11 +13,11 @@ and the [shadPS4](https://github.com/shadps4-emu/shadPS4) renderer.
 
 ## Download
 
-From the [latest release](https://github.com/Jgamrot/bloodborne_pc/releases/latest), download
-**[bbport-windows.zip](https://github.com/Jgamrot/bloodborne_pc/releases/latest/download/bbport-windows.zip)**
+From the [latest release](https://github.com/Jgamrot/yharnam-pc/releases/latest), download
+**[bbport-windows.zip](https://github.com/Jgamrot/yharnam-pc/releases/latest/download/bbport-windows.zip)**
 and extract the whole archive. The two **Source code** downloads are for developers. Previews
 of upcoming features are marked *Pre-release* on the
-[releases page](https://github.com/Jgamrot/bloodborne_pc/releases).
+[releases page](https://github.com/Jgamrot/yharnam-pc/releases).
 
 ## Features
 
@@ -278,7 +278,7 @@ For testing the legacy CPU translations only, not for play:
 ## Roadmap, help and source
 
 - What is planned next: [docs/ROADMAP.md](docs/ROADMAP.md).
-- Problems: open an [issue](https://github.com/Jgamrot/bloodborne_pc/issues) with your graphics
+- Problems: open an [issue](https://github.com/Jgamrot/yharnam-pc/issues) with your graphics
   card, what happened, and `user\last_run.log` from the `bbport-windows` folder.
 - Building: [packaging/windows/README.md](packaging/windows/README.md).
 

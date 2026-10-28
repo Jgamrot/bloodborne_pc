@@ -9,6 +9,9 @@ Planned work is in [ROADMAP.md](ROADMAP.md).
 - **The port has its own client name, `yharnam-pc`.** Online servers (shadNet, The Hunter's Dream)
   now see `yharnam-pc/<version>` instead of `bbport-jgamrot/<version>`. The Hunter's Dream stays off
   in the launcher until its team accepts this client.
+- **The repository is now [Jgamrot/yharnam-pc](https://github.com/Jgamrot/yharnam-pc)** (the old
+  address redirects), and releases are tagged by version (`v2.3.1`); every launcher since 1.8 still
+  finds them.
 
 ## 2.3
 

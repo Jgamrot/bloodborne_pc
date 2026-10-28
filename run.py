@@ -96,7 +96,7 @@ def fail(message):
 START_SCRIPTS = ('game_check.py', 'enhancements.py', 'atlas.py', 'patches.py', 'aspect_ratio.py', 'mods.py',
                  'language_files.py', 'hud_layout.py', 'content_profile.py', 'link_libc.py', 'link_modules.py',
                  'prepare.py', 'shader_code.py', 'quiet_output.py')
-RELEASES = 'https://github.com/Jgamrot/bloodborne_pc/releases/latest'
+RELEASES = 'https://github.com/Jgamrot/yharnam-pc/releases/latest'
 # Text languages (PS4 system language ids) the game shows without Unlock Game Region: English
 # (US) and Russian (GitHub issue #58: Russian text without it).
 REGION_LANGUAGES = ('', '1', '8')

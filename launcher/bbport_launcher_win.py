@@ -46,16 +46,16 @@ MAX_LOG_LINES = 6000
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 # This fork's build; the release tag includes this version.
 VERSION = '2.3.1'
-CURRENT_RELEASE_TAG = 'qml-launcher-preview-26'
+CURRENT_RELEASE_TAG = 'v2.3.1'
 HERO_ART = PORT_DIR / 'launcher' / 'art' / 'hero.png'
 STRIP_ART = PORT_DIR / 'launcher' / 'art' / 'strip.png'
 # Co-op: the community server that answers the game's own server requests.
 COMMUNITY_SERVER = 'https://thehuntersdream.com'
 # Its co-op service (bbhost's), as run.py's COMMUNITY_API_PORT sets the game's BB_THD_SERVER.
 COMMUNITY_API_PORT = 18671
-RELEASES_API = 'https://api.github.com/repos/Jgamrot/bloodborne_pc/releases/latest'
-RELEASES_PAGE = 'https://github.com/Jgamrot/bloodborne_pc/releases/latest'
-RELEASES_LIST_API = 'https://api.github.com/repos/Jgamrot/bloodborne_pc/releases?per_page=100'
+RELEASES_API = 'https://api.github.com/repos/Jgamrot/yharnam-pc/releases/latest'
+RELEASES_PAGE = 'https://github.com/Jgamrot/yharnam-pc/releases/latest'
+RELEASES_LIST_API = 'https://api.github.com/repos/Jgamrot/yharnam-pc/releases?per_page=100'
 UPDATE_DIR = Path(tempfile.gettempdir()) / 'bbport-update'
 # The last answer from GitHub, so a direct launch (no launcher window) can check quietly and the
 # launcher shows the result the next time it opens. Off with check_updates like every check.
