@@ -13,7 +13,7 @@ contributors.
 With that pool the game's NP and sceNet imports are these instead of the shadNet ones. sceHttp
 stays shadPS4's (`vendor/shadps4/core/libraries/network/http.cpp`), with two `bbport` hooks that act
 only in that pool: `*.example.com` host-override keys and the account token and ruleset headers.
-The servers see the build as `BB_CLIENT_VERSION` (`bbport-jgamrot <version>`, set by the
+The servers see the build as `BB_CLIENT_VERSION` (`yharnam-pc <version>`, set by the
 launcher).
 
 The network, NP and shadNet libraries beside it are shadPS4 v0.20.0's with Awaken's changes

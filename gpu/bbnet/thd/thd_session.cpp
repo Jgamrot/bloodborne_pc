@@ -83,7 +83,7 @@ const Config& Cfg() {
         if (c.ruleset.empty()) c.ruleset = "vanilla";
         // "BloodBorneButPc 1.2" -> "BloodBorneButPc/1.2": the server tells clients apart by it.
         c.client = Env("BB_CLIENT_VERSION");
-        if (c.client.empty()) c.client = "bbport-jgamrot"; // bbport: this fork, not Awaken's
+        if (c.client.empty()) c.client = "yharnam-pc"; // bbport: this fork, not Awaken's
         std::replace(c.client.begin(), c.client.end(), ' ', '/');
         c.p2p_addr = Env("BB_THD_P2P_ADDR");
         const std::string port = Env("BB_P2P_PORT");

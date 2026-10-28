@@ -86,7 +86,7 @@ class HuntersDreamTests(unittest.TestCase):
 
     def test_client_version_names_this_fork(self):
         env = launcher.game_environment(self.settings)
-        self.assertEqual(env['BB_CLIENT_VERSION'], f'bbport-jgamrot {launcher.VERSION}')
+        self.assertEqual(env['BB_CLIENT_VERSION'], f'yharnam-pc {launcher.VERSION}')
         self.assertNotIn('shadPS4', env['BB_CLIENT_VERSION'])
 
     def test_sign_in_opens_the_link_page_with_its_code(self):
@@ -113,7 +113,7 @@ class HuntersDreamTests(unittest.TestCase):
             line = launcher.thd_account_check('https://thehuntersdream.com', 'Hunter1', 'tok')
         request = urlopen.call_args[0][0]
         self.assertEqual(request.get_header('X-bb-token'), 'tok')
-        self.assertEqual(request.get_header('User-agent'), f'bbport-jgamrot/{launcher.VERSION}')
+        self.assertEqual(request.get_header('User-agent'), f'yharnam-pc/{launcher.VERSION}')
         self.assertIn('refused by the server (This client is not supported)', line)
         self.assertIn('signing in again does not help', line)
         self.assertTrue(launcher.thd_refused())  # remembered: no more checks from this version
@@ -160,7 +160,7 @@ class HuntersDreamTests(unittest.TestCase):
         # The game's line when the server refuses this build ("client is not supported").
         source = (ROOT / 'gpu/bbnet/thd/thd_session.cpp').read_text(encoding='utf-8')
         self.assertIn('Log("' + launcher.THD_REFUSED_LINE.removeprefix('THD: '), source)
-        line = (f"THD: the server refused this client (bbport-jgamrot/{launcher.VERSION}) for Hunter1 "
+        line = (f"THD: the server refused this client (yharnam-pc/{launcher.VERSION}) for Hunter1 "
                 "(This client is not supported on The Hunter's Dream): all traffic to The Hunter's Dream "
                 "is stopped for this session; offline play and seamless co-op still work\n")
         self.assertFalse(launcher.note_game_output('THD: np: event #3 guest_invite\n'))
@@ -191,7 +191,7 @@ class HuntersDreamTests(unittest.TestCase):
         self.assertEqual((env['BB_COOP'], env['BB_ONLINE'], env['BB_SHADNET_SERVER']),
                          ('1', '1', '100.65.141.9:31313'))
         # A new launcher version tries The Hunter's Dream again.
-        with mock.patch.object(launcher, 'CLIENT_VERSION', 'bbport-jgamrot 9.9'):
+        with mock.patch.object(launcher, 'CLIENT_VERSION', 'yharnam-pc 9.9'):
             self.assertFalse(launcher.thd_refused())
             self.assertEqual(launcher.game_environment(self.settings)['BB_NET_BACKEND'], 'thd')
         self.assertTrue(launcher.thd_refused())

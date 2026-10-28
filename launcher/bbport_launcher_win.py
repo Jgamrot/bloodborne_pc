@@ -45,8 +45,8 @@ PATCH_VERSION = '01.09'
 MAX_LOG_LINES = 6000
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 # This fork's build; the release tag includes this version.
-VERSION = '2.3'
-CURRENT_RELEASE_TAG = 'qml-launcher-preview-25'
+VERSION = '2.3.1'
+CURRENT_RELEASE_TAG = 'qml-launcher-preview-26'
 HERO_ART = PORT_DIR / 'launcher' / 'art' / 'hero.png'
 STRIP_ART = PORT_DIR / 'launcher' / 'art' / 'strip.png'
 # Co-op: the community server that answers the game's own server requests.
@@ -605,8 +605,8 @@ HUNTERS_DREAM_POOL = os.environ.get('BB_HUNTERS_DREAM') == '1'
 ONLINE_POOLS = [('shadnet', ('shadNet server (address below)',)),
                 ('huntersdream', ("The Hunter's Dream (Discord sign-in)",))]
 # Which build a server sees: shadNet's client version and The Hunter's Dream's client field
-# ("bbport-jgamrot/<version>"). This fork's own name, never an official shadPS4 one.
-CLIENT_VERSION = f'bbport-jgamrot {VERSION}'
+# ("yharnam-pc/<version>"). This fork's own name, never an official shadPS4 one.
+CLIENT_VERSION = f'yharnam-pc {VERSION}'
 
 
 # How the launcher's PLAY starts the game: 'offline', 'huntersdream' (online on The Hunter's
@@ -656,7 +656,7 @@ def thd_sign_in(game_server, on_code, cancelled=lambda: False):
         raise ValueError(_(*THD_REFUSED_NOTE))
     auth = community_address(game_server)
     start = thd_call(auth + '/auth/device/start',
-                     {'DeviceName': f'bbport-jgamrot on {os.environ.get("COMPUTERNAME", "PC")}'})
+                     {'DeviceName': f'yharnam-pc on {os.environ.get("COMPUTERNAME", "PC")}'})
     device, user_code = start.get('DeviceCode', ''), start.get('UserCode', '')
     if not device or not user_code:
         raise ValueError('no code in the reply')

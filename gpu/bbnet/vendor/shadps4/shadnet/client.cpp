@@ -558,14 +558,14 @@ static std::vector<u8> MakeComIdPayload(const std::string& com_id, const std::st
 }
 
 std::string ShadNetClient::BuildVersionString() {
-    // bbport: this fork's own name (the launcher's BB_CLIENT_VERSION, "bbport-jgamrot
+    // bbport: this fork's own name (the launcher's BB_CLIENT_VERSION, "yharnam-pc
     // <version>"), never an official shadPS4 version string.
     const char* env = std::getenv("BB_CLIENT_VERSION");
     if (env && *env) {
         return env;
     }
     const char* port = std::getenv("BB_PORT_VERSION");
-    return std::string("bbport-jgamrot ") + (port && *port ? port : "dev");
+    return std::string("yharnam-pc ") + (port && *port ? port : "dev");
 }
 
 u64 ShadNetClient::ReportClientVersion() {

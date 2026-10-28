@@ -4,6 +4,12 @@ Windows releases of this fork, newest first. Each is on the
 [releases page](https://github.com/Jgamrot/bloodborne_pc/releases) as `bbport-windows.zip`.
 Planned work is in [ROADMAP.md](ROADMAP.md).
 
+## 2.3.1
+
+- **The port has its own client name, `yharnam-pc`.** Online servers (shadNet, The Hunter's Dream)
+  now see `yharnam-pc/<version>` instead of `bbport-jgamrot/<version>`. The Hunter's Dream stays off
+  in the launcher until its team accepts this client.
+
 ## 2.3
 
 Thirty-four community pull requests (most from xiaodoudou) and fixes for the newer issues:
