@@ -1,6 +1,6 @@
 """run.py remove_stale_views: the game views with mods (mod-game-*) a game left behind are removed at the
 next start, while no other game runs; the game folder they link into stays as it was. From nick24051998,
-Supermedo/bloodborne_pc#112."""
+Supermedo/bloodborne_pc#112. Also run.py steam_layers_off (Supermedo/bloodborne_pc#120)."""
 from paths import ROOT
 import importlib.util
 import sys
@@ -84,6 +84,14 @@ class StaleViewTests(unittest.TestCase):
         with mock.patch.object(run, 'game_running', return_value=False):
             run.remove_stale_views(self.out, game)
         self.assertTrue((game / 'eboot.bin').is_file())
+
+
+class SteamLayerTests(unittest.TestCase):
+    def test_steams_pre_caching_layer_is_off_for_the_game(self):
+        env = {}
+        run.steam_layers_off(env)
+        self.assertEqual(env['DISABLE_VK_LAYER_VALVE_steam_fossilize_1'], '1')
+        self.assertNotIn('DISABLE_VK_LAYER_VALVE_steam_overlay_1', env)  # Steam's overlay stays
 
 
 if __name__ == '__main__':

@@ -153,6 +153,14 @@ def remove_stale_views(out, game):
         print(f'Mods: removed {removed} game view(s) an earlier game left behind')
 
 
+def steam_layers_off(env):
+    """Started from Steam, the game gets Steam's Vulkan layers. Its shader pre-caching layer
+    (Fossilize) cannot record the port's pipelines ("Fossilize ERROR: Cannot copy unknown pNext
+    sType"), and a tester's AMD driver crashed right after (amdvlk64.dll). The port keeps its own
+    pipeline cache; Steam's overlay stays. From nick24051998, Supermedo/bloodborne_pc#120."""
+    env['DISABLE_VK_LAYER_VALVE_steam_fossilize_1'] = '1'
+
+
 def wait_for(pid):
     kernel32 = ctypes.windll.kernel32
     SYNCHRONIZE = 0x00100000
@@ -416,6 +424,7 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     env.setdefault('BB_CONFIG', str(data / 'bbport.ini'))
     config = env['BB_CONFIG']
+    steam_layers_off(env)
     if not env.get('BB_FSR411_DIR') and not (PORT / 'fsr4_411').is_dir() and (data / 'fsr4_411').is_dir():
         env['BB_FSR411_DIR'] = str(data / 'fsr4_411')
 
