@@ -22,7 +22,7 @@ void SetWindowStatus(const std::string& status); // gpu/shim/window.cpp: the tit
 
 namespace Serialization {
 /* You should increment versions below once corresponding serialization scheme is changed. */
-static constexpr u32 ShaderBinaryVersion = 10u; // bbport: subgroup barriers for shared memory (8), GCN NaN/Inf rules (9)
+static constexpr u32 ShaderBinaryVersion = 11u; // bbport: subgroup barriers for shared memory (8), GCN NaN/Inf rules (9), jitter in clip space (11)
 static constexpr u32 ShaderMetaVersion = 8u; // bbport: pre-build (attribute V#s, tess constants)
 static constexpr u32 PipelineKeyVersion = 6u; // bbport: vertex shaders paired by binding start
 } // namespace Serialization
