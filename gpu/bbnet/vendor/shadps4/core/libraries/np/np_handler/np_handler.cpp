@@ -18,6 +18,7 @@
 #include "core/libraries/np/np_matching2/np_matching2_mm.h"
 #include "core/user_settings.h"
 #include "imgui/shadnet_notifications_layer.h"
+#include "np_lookup.h"
 #include "shadnet.pb.h"
 #include "shadnet/server_probe.h"
 
@@ -694,6 +695,7 @@ void NpHandler::ResolveOnlineId(
         std::lock_guard lock(m_mutex_pending_lookup);
         PendingLookupRequest pending;
         pending.user_id = user_id;
+        pending.online_id = online_id;
         pending.on_result = std::move(on_result);
         m_pending_lookup.emplace(pkt_id, std::move(pending));
     }
@@ -703,6 +705,7 @@ void NpHandler::ResolveOnlineId(
 void NpHandler::OnLookupReply(s32 user_id, ShadNet::CommandType /*cmd*/, u64 pkt_id,
                               ShadNet::ErrorType error, const std::vector<u8>& body) {
     std::function<void(s32, u64, const std::string&)> on_result;
+    std::string online_id;
     {
         std::lock_guard lock(m_mutex_pending_lookup);
         auto it = m_pending_lookup.find(pkt_id);
@@ -710,6 +713,7 @@ void NpHandler::OnLookupReply(s32 user_id, ShadNet::CommandType /*cmd*/, u64 pkt
             return; // no waiter (already flushed by a disconnect, or a stray reply)
         }
         on_result = std::move(it->second.on_result);
+        online_id = std::move(it->second.online_id);
         m_pending_lookup.erase(it);
     }
     if (!on_result) {
@@ -723,6 +727,14 @@ void NpHandler::OnLookupReply(s32 user_id, ShadNet::CommandType /*cmd*/, u64 pkt
     }
     if (error == ShadNet::ErrorType::InvalidInput) {
         on_result(ORBIS_NP_COMMUNITY_ERROR_INVALID_ARGUMENT, 0, {});
+        return;
+    }
+    if (const auto id = bbnet::LookupWithoutServer(static_cast<u8>(error), online_id)) {
+        // bbport: a server without the command (shadnet-p2p, which seamless co-op hosts run):
+        // the NpId is the online id itself (np_lookup.h, #231).
+        LOG_INFO(NpHandler, "LookupOnlineId: user_id={} pkt_id={}: the server has no lookup; "
+                 "the NpId is '{}'", user_id, pkt_id, *id);
+        on_result(ORBIS_OK, 0, *id);
         return;
     }
     if (error != ShadNet::ErrorType::NoError) {
