@@ -16,7 +16,7 @@ from patches import (EBOOT_BASE, FIXES, FPS_PRESETS, OUTPUT_SIZE, RESOLUTION_TEM
                      compile_external, frame_rate_fixes, sprint_fix_enabled, eboot_bytes,
                      eboot_matches_patches, patch_fingerprint, patch_sites, game_app_version,
                      eboot_is_109, SCALED_BASE, SCALED_FPS, SCALED_VALUES, fps_preset, rate_scaled,
-                     eboot_segments, rate_corrections, camera_value, EFFECT_RATE_SITES,
+                     eboot_segments, rate_corrections, camera_value, EFFECT_RATE_SITES, EVENT_FRAME_SITES,
                      CLOTH_STIFFNESS, CLOTH_LEFT_OUT, CLOTH_SUBSTEPS, CLOTH_CAVES, WIND_STEP, WIND_STEP_LOAD, WIND_FORCE_LOAD, WIND_PACE, CAMERA_FIELDS, frame_steps, preset_writes, with_external,
                      HEAP_PATCH, HEAP_GUARD, pc_heaps_enabled, site_matches, gx_region_writes,
                      GX_REGION_GUARD, GX_HEAP_GUARD, GX_HEAP_PS4,
@@ -243,6 +243,25 @@ class RateCorrectionTests(unittest.TestCase):
         _, out = self.corrected(120, settings={'effect_rate_fix': '0'})
         self.assertTrue(sites <= dict(out).keys())
 
+    def test_event_waits_keep_the_games_frames(self):
+        # The lists' 0.04 and 1/15 for the EMEVD frame waits and time conditions are dropped:
+        # the Doll's 89-frame kneel wait at the game's 1/30 (#60).
+        sites = {a - EBOOT_BASE for a in EVENT_FRAME_SITES}
+        for preset, fps in ((['60 FPS++'], 60), (['90 FPS++'], 90), (['Uncap FPS++'], None)):
+            with self.subTest(preset=preset):
+                writes = compile_patches(XML, preset, '01.09', SEGMENTS)
+                listed = sites & dict(writes).keys()
+                self.assertTrue(listed)
+                for offset in listed:
+                    self.assertGreater(struct.unpack('<f', dict(writes)[offset])[0], 1 / 30 + 1e-4)
+                with mock.patch.dict('os.environ', {}, clear=True), redirect_stdout(io.StringIO()):
+                    out = rate_corrections(writes, fps, None, {})
+                self.assertFalse(sites & dict(out).keys())
+                for env, settings in (({'BB_EVENT_FRAMES_FIX': '0'}, {}), ({}, {'event_frames_fix': '0'})):
+                    with mock.patch.dict('os.environ', env, clear=True), redirect_stdout(io.StringIO()):
+                        out = rate_corrections(writes, fps, None, settings)
+                    self.assertEqual(listed, sites & dict(out).keys())
+
     def test_cloth_stiffness_and_the_1_0_sites_above_60(self):
         for fps in (120, 144):
             with self.subTest(fps=fps):
@@ -320,7 +339,7 @@ class RateCorrectionTests(unittest.TestCase):
     def test_wind_left_alone_on_other_code(self):
         writes = compile_patches(XML, ['90 FPS++'], '01.09', SEGMENTS)
         for elf in (fake_elf(0, bytes(16)), fake_elf(WIND_STEP - EBOOT_BASE, struct.pack('<2f', 1 / 60, 1 / 30))):
-            with mock.patch.dict('os.environ', {}, clear=True), redirect_stdout(io.StringIO()) as log:
+            with mock.patch.dict('os.environ', {'BB_EVENT_FRAMES_FIX': '0'}, clear=True),                     redirect_stdout(io.StringIO()) as log:
                 self.assertEqual(rate_corrections(writes, 90, elf, {}), writes)
             self.assertIn('wind left as the list has it', log.getvalue())
 
@@ -351,10 +370,15 @@ class RateCorrectionTests(unittest.TestCase):
         self.assertEqual(camera_value(0x238, 0.5, 0.5), 0.5)
 
     def test_existing_presets_are_unchanged_by_default(self):
+        # But for their event frame waits (test_event_waits_keep_the_games_frames).
+        events = {a - EBOOT_BASE for a in EVENT_FRAME_SITES}
         for preset, fps in (('60 FPS++', 60), ('90 FPS++', 90), ('Uncap FPS++', None)):
             with self.subTest(preset=preset):
                 writes = compile_patches(XML, [preset], '01.09', SEGMENTS)
                 with mock.patch.dict('os.environ', {}, clear=True), redirect_stdout(io.StringIO()):
+                    self.assertEqual(rate_corrections(writes, fps, None, {}),
+                                     [(o, d) for o, d in writes if o not in events])
+                with mock.patch.dict('os.environ', {'BB_EVENT_FRAMES_FIX': '0'}, clear=True),                         redirect_stdout(io.StringIO()):
                     self.assertEqual(rate_corrections(writes, fps, None, {}), writes)
 
 

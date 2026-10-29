@@ -87,6 +87,15 @@ def preset_writes(xml,preset,fps,app_version,segments,elf=None,settings=None):
 # lifetime and ran GPU particles twice as fast (the motes rising from a lamp's travel and a
 # boss's blood rain went missing).
 EFFECT_RATE_SITES=(0x26FB39F,0x4CAD7FC)
+# Event scripts keep the data's waits (event_frames_fix=0 / BB_EVENT_FRAMES_FIX=0: off). The
+# EMEVD time conditions (bank 1, 0x1BC8630) and waits (bank 1001, 0x1BC8A90) turn their frame
+# counts, written in 30 fps frames, into seconds by the game's 1/30 at 0x4D27284 and 0x4D2728C
+# and wait those seconds. The 60, 90 and uncapped lists set 0x4D2728C to 0.04 and
+# the 60 list 0x4D27284 to 1/15, so every scripted wait in frames ran 1.2 times (a condition 2
+# times) as long; Kyo's rate base writes neither. The Doll's level-up (m21_00_00_00 event
+# 12100113) plays her kneel, waits 89 frames and loops the kneeling pose: 3.56 s instead of
+# 2.97 s let the kneel end and she stood for a moment before the loop pulled her down (#60).
+EVENT_FRAME_SITES=(0x4D27284,0x4D2728C)
 # The cloth above 60, as Kyo's 1.3 (cloth_fix=0 / BB_CLOTH_FIX=0: off): one substep a frame runs
 # the solver at the frame rate against the 60 its part files are tuned for, and the six
 # constraint caves scale its stiffness by the scalars at 0x4D3BD00: (60/fps)^2. The 1.0 lists
@@ -230,6 +239,7 @@ def rate_corrections(writes, fps, elf, settings):
     rate is put back and the wind's force weighed as at 30)."""
     f=lambda v: struct.pack('<f',v)
     effects=setting_on(settings,'effect_rate_fix','BB_EFFECT_RATE_FIX','1')
+    events=setting_on(settings,'event_frames_fix','BB_EVENT_FRAMES_FIX','1')
     cloth=bool(fps and fps>60 and setting_on(settings,'cloth_fix','BB_CLOTH_FIX','1'))
     camera=bool(fps and setting_on(settings,'camera_fix','BB_CAMERA_FIX','0'))
     wind=bool(elf is not None and setting_on(settings,'wind_fix','BB_WIND_FIX','1'))
@@ -238,6 +248,8 @@ def rate_corrections(writes, fps, elf, settings):
     for offset,data in writes:
         a=offset+EBOOT_BASE
         if effects and a in EFFECT_RATE_SITES and len(data)==4:
+            continue
+        if events and a in EVENT_FRAME_SITES and len(data)==4:
             continue
         if cloth:
             left=next(((lo,hi) for lo,hi in CLOTH_LEFT_OUT if lo<=a<hi),None)
@@ -272,7 +284,7 @@ def rate_corrections(writes, fps, elf, settings):
         paced=wind_pace(out,fps,elf)
         wind=paced is not None
         out=paced if wind else out
-    names=[n for n,on in (('effect rate',effects),('cloth',cloth),('camera',camera),('wind',wind)) if on]
+    names=[n for n,on in (('effect rate',effects),('event waits',events),('cloth',cloth),('camera',camera),('wind',wind)) if on]
     print(f'Patches: frame-rate corrections: {", ".join(names) or "none"}')
     return out
 
