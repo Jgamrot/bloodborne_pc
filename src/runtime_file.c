@@ -407,6 +407,10 @@ static int64_t do_open(const char *guest,int flags,int mode) {
     ++opens;
     pthread_mutex_unlock(&lock);
     if (audio_trace() && strstr(guest,"sound/")) printf("Audio trace: open(%s) -> fd %d, %lld bytes\n",guest,fd,(long long)s.st_size);
+    /* Cutscenes and movies are few: each one the game loads is logged (GitHub issue #236, an
+     * ending whose cutscene never played). A missing one is logged above as not found. */
+    if (strstr(guest,"/remo/") || strstr(guest,"/movie/"))
+        printf("Runtime: cutscene/movie file %s opened, %lld bytes\n",guest,(long long)s.st_size);
     /* The text language the game took, as its first menu text (GitHub issues #126, #133). */
     static int text_logged;
     if (strstr(guest,"/msg/") && strstr(guest,"menu.msgbnd") && !__atomic_exchange_n(&text_logged,1,__ATOMIC_RELAXED)) {

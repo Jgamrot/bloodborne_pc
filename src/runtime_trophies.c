@@ -43,6 +43,7 @@ int runtime_trophy_unlock(int id) {
     pthread_mutex_lock(&trophy_lock);
     if (unlocked[id]) {
         pthread_mutex_unlock(&trophy_lock);
+        printf("Runtime: local trophy %d already unlocked\n", id);
         return 0;
     }
     const int64_t now = (int64_t)time(NULL);

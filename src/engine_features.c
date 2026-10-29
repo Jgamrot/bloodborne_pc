@@ -5,6 +5,7 @@
 #include "cloth_rate.h"
 #include "blur_kernel.h"
 #include "effect_step_gate.h"
+#include "ending_trace.h"
 #include "engine_hooks.h"
 #include "frame_time.h"
 #include "key_prompts.h"
@@ -41,7 +42,8 @@ static const Install installs[] = {bb_cloth_rate_install,
                                    bb_blur_kernel_install, bb_render_jobs_install,
                                    bb_effect_step_gate_install, bb_light_blink_install,
                                    bb_water_gate_install,
-                                   bb_frame_time_install /* after the effect step gate: it moves the effects' step load */};
+                                   bb_frame_time_install /* after the effect step gate: it moves the effects' step load */,
+                                   bb_ending_trace_install /* last: logging only (#236) */};
 static const Frame frames[] = {bb_pc_menu_frame, bb_menu_pointer_frame};
 
 int bb_engine_install(void) {
