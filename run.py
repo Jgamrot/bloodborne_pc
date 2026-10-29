@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 
 PORT = Path(__file__).resolve().parent
 # The keyboard key images as the launcher adds them to the mods folder (launcher
@@ -123,6 +124,52 @@ def explain_missing_port_files(missing):
     return (f'This copy of the port is incomplete: {missing[0]}{more} missing from {PORT}. '
             f'Download the port again from {RELEASES} and unpack the whole zip; copies from '
             f'other sites often leave files out.')
+
+
+def game_running():
+    """Whether a game (bb-probe.exe) runs now; unknown counts as yes."""
+    try:
+        result = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq bb-probe.exe', '/FO', 'CSV', '/NH'],
+                                capture_output=True, timeout=15, creationflags=no_console())
+    except (OSError, subprocess.SubprocessError):
+        return True
+    # Bytes: its "no tasks" line is in the console's code page and language.
+    return result.returncode != 0 or b'bb-probe.exe' in result.stdout.lower()
+
+
+def remove_stale_views(out, game):
+    """The game views with mods (mods.py's mod-game-* folders in out, beside the game or in
+    %TEMP%) that a game left behind when it did not end through run.py (ended in the Task
+    Manager, the PC turned off): removed before a new one is made, while no game runs. They hold
+    links into the game folder; mods.remove_overlay deletes the links (shutil.rmtree does not
+    follow junctions), never what they point to. From nick24051998, Supermedo/bloodborne_pc#112."""
+    game = Path(game).resolve()
+    places = {Path(out).resolve(), game.parent, Path(tempfile.gettempdir()).resolve()}
+    stale = [path for place in places if place.is_dir() for path in place.glob('mod-game-*')
+             if path.is_dir() and not path.is_symlink()
+             and not (hasattr(path, 'is_junction') and path.is_junction())
+             and path.resolve() != game and not game.is_relative_to(path.resolve())]
+    if not stale or game_running():
+        return
+    sys.path.insert(0, str(PORT / 'scripts'))
+    from mods import remove_overlay
+    removed = 0
+    for path in stale:
+        try:
+            remove_overlay(path, game)
+            removed += 1
+        except OSError as error:
+            print(f'Mods: {path} could not be removed: {error}')
+    if removed:
+        print(f'Mods: removed {removed} game view(s) an earlier game left behind')
+
+
+def steam_layers_off(env):
+    """Started from Steam, the game gets Steam's Vulkan layers. Its shader pre-caching layer
+    (Fossilize) cannot record the port's pipelines ("Fossilize ERROR: Cannot copy unknown pNext
+    sType"), and a tester's AMD driver crashed right after (amdvlk64.dll). The port keeps its own
+    pipeline cache; Steam's overlay stays. From nick24051998, Supermedo/bloodborne_pc#120."""
+    env['DISABLE_VK_LAYER_VALVE_steam_fossilize_1'] = '1'
 
 
 def wait_for(pid):
@@ -388,6 +435,7 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     env.setdefault('BB_CONFIG', str(data / 'bbport.ini'))
     config = env['BB_CONFIG']
+    steam_layers_off(env)
     if not env.get('BB_FSR411_DIR') and not (PORT / 'fsr4_411').is_dir() and (data / 'fsr4_411').is_dir():
         env['BB_FSR411_DIR'] = str(data / 'fsr4_411')
 
@@ -407,6 +455,7 @@ def main():
     if not (game / 'eboot.bin').is_file():
         fail(f'No eboot.bin in {game} (set BB_GAME_DIR).')
     original_game = game.resolve()
+    remove_stale_views(out, original_game)
     # A broken extraction (stale compressed sectors): the game would hang loading its shaders,
     # with no error. (parsifal295, Supermedo PR #64; bbport 0.5-pre4.) BB_SKIP_GAME_CHECK=1 skips it.
     if env.get('BB_SKIP_GAME_CHECK') != '1':

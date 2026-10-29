@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <xxhash.h>
+#include <cmath>
 #include <mutex>
 #include <set>
 #include "video_core/renderer_vulkan/ui_composition.h"
@@ -41,6 +42,18 @@ static Shader::PushData MakeUserData(const AmdGpu::Regs& regs) {
     push_data.yoffset = regs.viewport_control.yoffset_enable ? regs.viewports[0].yoffset : 0.f;
     push_data.yscale = regs.viewport_control.yscale_enable ? regs.viewports[0].yscale : 1.f;
     return push_data;
+}
+
+// Normal clip-space draws use the otherwise unused window offsets for projection
+// jitter. Clip-disabled draws retain their screen-to-clip conversion. Reusing the
+// two floats keeps PushData within Vulkan's guaranteed 128-byte push-constant size.
+static void SetProjectionJitter(Shader::PushData& push, const AmdGpu::Regs& regs,
+                                const std::array<float, 2>& jitter) {
+    if (regs.IsClipDisabled()) return;
+    push.xoffset = std::isfinite(push.xscale) && push.xscale != 0.f
+                       ? jitter[0] / push.xscale : 0.f;
+    push.yoffset = std::isfinite(push.yscale) && push.yscale != 0.f
+                       ? jitter[1] / push.yscale : 0.f;
 }
 
 Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime& runtime_,
@@ -1120,7 +1133,6 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
             });
         }
     }
-    pipeline->BindResources(set_writes, push_data);
     // bbport: jitter geometry drawn with the scene depth, not full-screen passes (a shifted
     // full-screen quad leaves an edge column unwritten).
     draw_jitter = {};
@@ -1128,6 +1140,8 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
         (regs.num_indices > 6 || regs.num_instances.NumInstances() > 1)) {
         draw_jitter = upscaler->Jitter();
     }
+    SetProjectionJitter(push_data, regs, draw_jitter);
+    pipeline->BindResources(set_writes, push_data);
     UpdateDynamicState(pipeline, is_indexed);
     MarkPass(pipeline, state);
     scheduler.BeginRendering(state);
@@ -1264,11 +1278,12 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
     push_data.xoffset *= target_scale[0];
     push_data.yscale *= target_scale[1];
     push_data.yoffset *= target_scale[1];
-    pipeline->BindResources(set_writes, push_data);
     draw_jitter = {};
     if (upscaler->Enabled() && db_desc.first && db_desc.first == camera_motion->Depth()) {
         draw_jitter = upscaler->Jitter();
     }
+    SetProjectionJitter(push_data, Regs(), draw_jitter);
+    pipeline->BindResources(set_writes, push_data);
     UpdateDynamicState(pipeline, is_indexed);
     MarkPass(pipeline, state);
     scheduler.BeginRendering(state);
@@ -3391,10 +3406,9 @@ void Rasterizer::UpdateViewportScissorState() const {
             const auto yoffset = vp_ctl.yoffset_enable ? vp.yoffset : 0.f;
             const auto yscale = vp_ctl.yscale_enable ? vp.yscale : 1.f;
 
-            // bbport: sub-pixel jitter of scene geometry for the temporal upscaler; the same
-            // shift as jittering the projection.
-            viewport.x = (xoffset - xscale) * target_scale[0] + draw_jitter[0];
-            viewport.y = (yoffset - yscale) * target_scale[1] + draw_jitter[1];
+            // Keep coverage bounds fixed; scene jitter is applied to clip positions.
+            viewport.x = (xoffset - xscale) * target_scale[0];
+            viewport.y = (yoffset - yscale) * target_scale[1];
             viewport.width = xscale * 2.0f * target_scale[0];
             viewport.height = yscale * 2.0f * target_scale[1];
         }
