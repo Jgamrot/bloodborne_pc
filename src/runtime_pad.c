@@ -655,12 +655,33 @@ static ABI int32_t pad_info(int32_t handle, ControllerInfo *info) {
     pthread_mutex_unlock(&lock);
     return 0;
 }
+/* Short effects on Xbox pads (#213): a hit rumbles both motors for a while, but a visceral attack
+ * is a brief jolt. A DualShock's motors answer within a frame; an XInput pad's need tens of
+ * milliseconds to spin up, so a pulse the game stops a frame or two later was never felt, and
+ * its right (high-frequency) motor is much weaker than the DualShock's small motor. A pulse is
+ * therefore kept for at least PAD_RUMBLE_MIN_US (a stop that comes sooner keeps the last values
+ * and lets SDL's duration end them), and on an Xbox pad an effect on the small motor alone also
+ * drives the large one at half its strength. */
+#define PAD_RUMBLE_MIN_US 150000u
+static uint16_t rumble_low, rumble_high;   /* the effect running, after the mapping above */
+static uint64_t rumble_since;              /* when it started */
 static ABI int32_t pad_vibration(int32_t handle, const uint8_t *param) {
     if (handle!=PAD_HANDLE || !opened) return ERR_INVALID_HANDLE;
     if (!param) return ERR_INVALID_ARG;
     pthread_mutex_lock(&lock);
     SDL_Gamepad *g=current_gamepad();
-    const bool ok=g && SDL_RumbleGamepad(g,(uint16_t)(param[0]*257),(uint16_t)(param[1]*257),1000);
+    uint16_t low=(uint16_t)(param[0]*257), high=(uint16_t)(param[1]*257);
+    if (pad_xbox && !low && high) low=high/2;
+    uint32_t duration_ms=1000;
+    const uint64_t now=now_us();
+    if (low || high) {
+        if (!rumble_low && !rumble_high) rumble_since=now;
+        rumble_low=low; rumble_high=high;
+    } else if ((rumble_low || rumble_high) && now-rumble_since<PAD_RUMBLE_MIN_US) {
+        low=rumble_low; high=rumble_high;
+        duration_ms=(uint32_t)((rumble_since+PAD_RUMBLE_MIN_US-now+999)/1000);
+    } else rumble_low=rumble_high=0;
+    const bool ok=g && SDL_RumbleGamepad(g,low,high,duration_ms);
     /* BB_PAD_VIBRATION_LOG=1: what the game asks for (large, small motor) and whether SDL took
      * it, to compare pads where some effects do not rumble (#213). */
     static int log_vibration=-1;
