@@ -1,8 +1,28 @@
 # Changelog
 
 Windows releases of this fork, newest first. Each is on the
-[releases page](https://github.com/Jgamrot/bloodborne_pc/releases) as `bbport-windows.zip`.
+[releases page](https://github.com/Jgamrot/yharnam-pc/releases) as `bbport-windows.zip`.
 Planned work is in [ROADMAP.md](ROADMAP.md).
+
+## 2.3.2
+
+- **Co-op with three players** (#231): BBSC 0.0.2 looks up the third player by NP id, which the
+  co-op server now answers, so the third player is no longer dropped.
+- **The Doll's level-up kneel above 30 FPS** (#60): the 60, 90 and Uncap FPS++ patch lists made
+  every scripted wait 1.2x longer, so she stood up before her kneeling loop. Event scripts keep the
+  game's 1/30 s frame (`event_frames_fix=0` keeps the lists' values).
+- **Dialogue missing, hits muffled** (#195): Game > Speakers (As in Windows, Stereo, 5.1, 7.1,
+  `BB_AUDIO_CHANNELS`). A TV that takes 7.1 over HDMI but plays only the front pair dropped the
+  centre channel, where the voices are; Stereo folds it into both fronts.
+- **Rumble on Xbox pads** (#213): a short jolt such as a visceral attack lasts at least 150 ms, and
+  an effect on the small motor alone also drives the large one at half strength.
+- **Smart App Control** (#234): when Windows blocks one of the port's programs, the log says so and
+  how to allow it, instead of a Python traceback.
+- **Ending trace** (#236): last_run.log records each cutscene the game starts, the ending flags in
+  the Hunter's Dream and the cutscene files it opens (`BB_ENDING_TRACE=0` turns it off).
+- **From Supermedo:** subpixel jitter without a flickering edge row (#133), texture eviction only
+  where it can relieve memory pressure (#129), stale mod views left by a crashed game removed
+  (#112), and Steam's Fossilize shader pre-caching off for the game (#120).
 
 ## 2.3.1
 
