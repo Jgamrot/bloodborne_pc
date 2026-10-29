@@ -175,9 +175,16 @@ static void audio_levels(void) {
         if (frames>0 && frames<=16384 && spec.freq>0)
             device_period_frames=(int)((int64_t)frames*48000/spec.freq);
     } else device_channels=-1;
-    printf("Runtime: audio device %d ch, period %d frames (%.1f ms), gain %.2f\n",
-           device_channels>0 ? device_channels : 0, device_period_frames,
-           device_period_frames*1000.0/48000.0, master_gain);
+    /* BB_AUDIO_CHANNELS (launchers: Speakers): the channels the game's 7.1 mix is folded
+     * to. A TV or headset can take 7.1 from Windows and play only the front pair, which
+     * loses the centre: dialogue and the voices in front of the camera (GitHub issue #195). */
+    const char *forced=getenv("BB_AUDIO_CHANNELS");
+    int forced_channels=forced && forced[0] ? atoi(forced) : 0;
+    if (forced_channels>=1 && forced_channels<=8) device_channels=forced_channels;
+    else forced_channels=0;
+    printf("Runtime: audio device %d ch%s, period %d frames (%.1f ms), gain %.2f\n",
+           device_channels>0 ? device_channels : 0, forced_channels ? " (BB_AUDIO_CHANNELS)" : "",
+           device_period_frames, device_period_frames*1000.0/48000.0, master_gain);
 }
 /* Bytes of queued PCM to stay ahead of the device. Four chunks, and at least
  * 80 ms. Two chunks still drain here: WASAPI reports a 1024-frame / 21 ms
