@@ -411,6 +411,10 @@ target_compile_options(thd-stop-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(thd-stop-test PRIVATE bbnet/thd)
 target_link_libraries(thd-stop-test PRIVATE -pthread)
 
+add_executable(np-lookup-test EXCLUDE_FROM_ALL ../tests/test_np_lookup.cpp)
+target_compile_options(np-lookup-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(np-lookup-test PRIVATE bbnet/include)
+
 add_executable(srt-walker-test EXCLUDE_FROM_ALL ../tests/test_srt_walker.cpp)
 target_compile_options(srt-walker-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(srt-walker-test PRIVATE $<TARGET_PROPERTY:bbgpu,INCLUDE_DIRECTORIES>)
