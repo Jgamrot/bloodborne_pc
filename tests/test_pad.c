@@ -27,6 +27,12 @@ uintptr_t runtime_lookup(const RuntimeExport *table, size_t count, const char *n
     return 0;
 }
 
+static uint16_t rumbled[2];
+static bool rumble(void *userdata, uint16_t low, uint16_t high) {
+    (void)userdata; rumbled[0]=low; rumbled[1]=high;
+    return true;
+}
+
 static void inject(const char *path, const char *tokens) {
     FILE *f=fopen(path,"w");
     assert(f);
@@ -90,6 +96,7 @@ int main(void) {
     desc.product_id=0x6189;
     desc.ntouchpads=1;
     desc.touchpads=&touch;
+    desc.Rumble=rumble;
     SDL_JoystickID id=SDL_AttachVirtualJoystick(&desc);
     assert(id!=0);
     SDL_Joystick *joystick=SDL_OpenJoystick(id);
@@ -126,6 +133,25 @@ int main(void) {
     assert(data.touch_count==1 && data.touches[0].x==480 && data.touches[0].id!=0);
     usleep(200000);
     assert(pad_read_state(1,&data)==0 && !(data.buttons & BTN_TOUCHPAD));
+    /* Vibration (#213): a pulse the game stops at once still runs PAD_RUMBLE_MIN_US and SDL
+     * then ends it; a later stop is passed on; on an Xbox pad a small-motor-only effect also
+     * drives the large motor. */
+    const uint8_t hit[2]={200,100}, jolt[2]={0,200}, stop[2]={0,0};
+    assert(pad_vibration(1,hit)==0 && rumbled[0]==200*257 && rumbled[1]==100*257);
+    assert(pad_vibration(1,stop)==0 && rumbled[0]==200*257);
+    usleep(PAD_RUMBLE_MIN_US+50000);
+    SDL_UpdateJoysticks();
+    assert(rumbled[0]==0 && rumbled[1]==0);
+    assert(pad_vibration(1,stop)==0 && rumbled[0]==0 && rumbled[1]==0);
+    assert(pad_vibration(1,jolt)==0 && rumbled[0]==0 && rumbled[1]==200*257);
+    usleep(PAD_RUMBLE_MIN_US+50000);
+    assert(pad_vibration(1,stop)==0 && rumbled[0]==0 && rumbled[1]==0);
+    pad_xbox=1;
+    assert(pad_vibration(1,jolt)==0 && rumbled[0]==200*257/2 && rumbled[1]==200*257);
+    assert(pad_vibration(1,stop)==0 && rumbled[1]==200*257);
+    usleep(PAD_RUMBLE_MIN_US+50000);
+    assert(pad_vibration(1,stop)==0 && rumbled[0]==0 && rumbled[1]==0);
+    pad_xbox=0;
     /* Two pads (Steam Input, DS4Windows: a quiet physical pad and the virtual one, #113): the
      * read stays on the pad in use and moves to the other once the first has been idle. */
     desc.name="bbport second controller";
@@ -173,5 +199,5 @@ int main(void) {
     assert(stick_axis(0,2000)==135 && stick_axis(0,32767)==255);
     SDL_Quit();
     unlink(path);
-    puts("PASS: pad ABI, touch IDs/timing, left/right clicks, Xbox Back, SDL touch coordinates, overlay capture, two pads, Xbox dead zone");
+    puts("PASS: pad ABI, touch IDs/timing, left/right clicks, Xbox Back, SDL touch coordinates, overlay capture, vibration pulses, two pads, Xbox dead zone");
 }
