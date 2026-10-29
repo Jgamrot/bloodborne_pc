@@ -55,12 +55,13 @@ class GraphicsPresetTests(unittest.TestCase):
             self.assertEqual(env['BB_FULLSCREEN_MODE'], 'borderless')
             self.assertNotIn('BB_DISPLAY', env)
             self.assertEqual(env['BB_VOICE_LANGUAGE'], 'auto')
-            app.update(fullscreen_mode='exclusive', display='2', voice_language='ptb')
+            self.assertNotIn('BB_AUDIO_CHANNELS', env)
+            app.update(fullscreen_mode='exclusive', display='2', voice_language='ptb', audio_channels='2')
             env = core.game_environment(app)
-            self.assertEqual((env['BB_FULLSCREEN_MODE'], env['BB_DISPLAY'], env['BB_VOICE_LANGUAGE']),
-                             ('exclusive', '2', 'ptb'))
+            self.assertEqual((env['BB_FULLSCREEN_MODE'], env['BB_DISPLAY'], env['BB_VOICE_LANGUAGE'],
+                              env['BB_AUDIO_CHANNELS']), ('exclusive', '2', 'ptb', '2'))
         for key, options in (('fullscreen_mode', core.FULLSCREEN_MODES), ('display', core.DISPLAYS),
-                             ('voice_language', core.VOICE_LANGUAGES)):
+                             ('voice_language', core.VOICE_LANGUAGES), ('audio_channels', core.AUDIO_CHANNELS)):
             self.assertIn(core.APP_DEFAULTS[key], [v for v, _ in options])
 
     def test_recommendation_from_gpu_status(self):

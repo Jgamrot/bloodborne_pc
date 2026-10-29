@@ -276,7 +276,7 @@ INI_DEFAULTS = {'upscaler': 'dlss', 'preset': '2', 'sharpen': '1', 'sharpness': 
                 **{key: '1' if on else '0' for key, _t, on in EFFECTS + EXTRAS + CHEATS + TWEAKS + ENHANCEMENTS + ATLAS}}
 APP_DEFAULTS = {'ui_language': '', 'game_dir': str(PORT_DIR.parent / 'CUSA03173'), 'user_dir': '', 'dlc_dir': '',
                 'mods_dir': '', 'mods_enabled': True, 'patches_dir': '', 'language': '1',
-                'voice_language': 'auto',
+                'voice_language': 'auto', 'audio_channels': '',
                 'player_name': '', 'fullscreen': False, 'fullscreen_mode': 'borderless', 'display': '',
                 'hdr': False, 'present_mode': 'Mailbox',
                 'fps_mode': '120', 'frame_cap': '', 'draw_pipe': '', 'readbacks': '',
@@ -381,6 +381,11 @@ VOICE_LANGUAGES = [('auto', ('As in the game', 'Как в игре')), ('eng', (
                    ('ptb', ('Português (Brasil)',)), ('ded', ('Deutsch',)),
                    ('esa', ('Español (América)',)), ('ese', ('Español (España)',)),
                    ('frf', ('Français',)), ('iti', ('Italiano',)), ('jaj', ('日本語',))]
+# Speakers (BB_AUDIO_CHANNELS): the channels the game's 7.1 mix is folded to. A TV or headset can
+# take 7.1 from Windows and play only the front pair: no dialogue (GitHub issue #195).
+AUDIO_CHANNELS = [('', ('As in Windows', 'Как в Windows')),
+                  ('2', ('Stereo (headphones, TV speakers)', 'Стерео (наушники, динамики ТВ)')),
+                  ('6', ('5.1',)), ('8', ('7.1',))]
 DRAW_PIPE = [('', ('Auto (8+ threads)', 'Авто (8+ потоков)')), ('1', ('On', 'Включён')),
              ('0', ('Off (more stable)', 'Выключен (стабильнее)'))]
 READBACKS = [('', ('Relaxed (default)', 'Relaxed (по умолчанию)')), ('0', ('Off', 'Выключены')),
@@ -841,6 +846,8 @@ def game_environment(s):
     env['BB_PATCHES_CONFIG'] = str(DATA_DIR / 'patches.json')
     env['BB_LANGUAGE'] = s['language']
     env['BB_VOICE_LANGUAGE'] = s.get('voice_language') or 'auto'
+    if s.get('audio_channels'):
+        env['BB_AUDIO_CHANNELS'] = str(s['audio_channels'])
     if str(s['player_name']).strip():
         env['BB_USER_NAME'] = str(s['player_name']).strip()
     env['BB_FULLSCREEN'] = '1' if s['fullscreen'] else '0'
@@ -1793,6 +1800,11 @@ class Launcher:
         self.row(f, _('Voice language', 'Язык озвучки'), self.choice(f, 'voice_language', 'app', VOICE_LANGUAGES),
                  _('As in the game uses the original voice setting; other choices use available tracks.',
                    '«Как в игре» оставляет исходную озвучку; другие варианты берут доступные дорожки.'))
+        self.row(f, _('Speakers', 'Динамики'), self.choice(f, 'audio_channels', 'app', AUDIO_CHANNELS),
+                 _('Stereo when dialogue is missing or hits sound muffled: some TVs and headsets take 7.1 '
+                   'and play only the front pair.',
+                   'Стерео, если не слышно диалогов или удары звучат глухо: некоторые ТВ и гарнитуры '
+                   'принимают 7.1 и играют только два передних канала.'))
         self.row(f, _('Player name', 'Имя игрока'), self.ttk.Entry(f, textvariable=self.var('player_name', 'app'), width=30),
                  _('Where the game shows the PSN name; empty: the default.', 'Где игра показывает имя PSN; пусто — по умолчанию.'))
         self.section(f, _('Effects', 'Эффекты'))
