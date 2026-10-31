@@ -1239,9 +1239,15 @@ class LauncherBackend(QObject):
         if not core.FROZEN or not url:
             webbrowser.open(page)
             return
+        if getattr(self, '_updating', False):  # a second press would delete the download in progress
+            return
         if QMessageBox.question(None, 'Bloodborne',
                                 f'Install version {version} now? Saves, settings and mods are kept.') != QMessageBox.Yes:
             return
+        self._updating = True
+        # The release is about 300 MB: without a percentage it looked stuck, and closing the
+        # launcher then dropped the download silently.
+        keep_open = 'keep the launcher open; it closes, installs and opens again by itself'
         def work():
             try:
                 if not core.remove_update_folder():
@@ -1250,9 +1256,18 @@ class LauncherBackend(QObject):
                 archive = core.UPDATE_DIR / 'update.zip'
                 request = urllib.request.Request(url, headers={'User-Agent': 'bbport-launcher'})
                 with urllib.request.urlopen(request, timeout=60) as reply, open(archive, 'wb') as out:
+                    total, done, shown = int(reply.headers.get('Content-Length') or 0), 0, -1
                     while chunk := reply.read(1 << 20):
                         out.write(chunk)
+                        done += len(chunk)
+                        percent = done * 100 // total if total else -1
+                        if percent != shown:
+                            shown = percent
+                            amount = f'{percent}%' if total else f'{done >> 20} MB'
+                            self.workerNotice.emit(f'Downloading version {version}… {amount} ({keep_open}).')
+                self.workerNotice.emit(f'Unpacking version {version}… ({keep_open}).')
                 core.extract_update(archive, core.UPDATE_DIR / 'new')
+                archive.unlink()
                 new = next((p.parent for p in (core.UPDATE_DIR / 'new').rglob('Bloodborne.exe')), None)
                 if not new:
                     raise OSError('Bloodborne.exe is missing from the download')
@@ -1260,8 +1275,9 @@ class LauncherBackend(QObject):
                                  cwd=new, stdin=subprocess.DEVNULL, creationflags=core.NO_WINDOW)
                 self.closeRequested.emit()
             except (OSError, zipfile.BadZipFile) as error:
+                self._updating = False
                 self.workerNotice.emit(f'Update failed: {error}')
-        self._set_notice(f'Downloading version {version}…')
+        self._set_notice(f'Downloading version {version}… ({keep_open}).')
         threading.Thread(target=work, daemon=True).start()
 
     # --- Repair: an incomplete port folder ------------------------------------------------------
